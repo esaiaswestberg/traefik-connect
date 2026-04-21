@@ -32,7 +32,7 @@ func TestBuildDesiredStubs(t *testing.T) {
 		},
 	}
 
-	specs, issues, err := buildDesiredStubs(snapshot, "traefik-connect", "traefik-connect", "secret")
+	specs, issues, err := buildDesiredStubs(snapshot, "traefik-connect", "traefik-connect", "sha256:stubimage", "secret")
 	if err != nil {
 		t.Fatalf("buildDesiredStubs() error = %v", err)
 	}

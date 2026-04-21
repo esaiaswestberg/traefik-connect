@@ -45,6 +45,7 @@ type PortBinding struct {
 type ContainerInspect struct {
 	ID     string `json:"Id"`
 	Name   string `json:"Name"`
+	Image  string `json:"Image"`
 	Config struct {
 		Hostname     string              `json:"Hostname"`
 		Image        string              `json:"Image"`
@@ -99,6 +100,10 @@ type ContainerCreateResponse struct {
 	Warnings []string `json:"Warnings,omitempty"`
 }
 
+type ImageInspect struct {
+	ID string `json:"Id"`
+}
+
 func (c *Client) ListContainers(ctx context.Context) ([]ContainerSummary, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.mustURL("/containers/json", url.Values{"all": {"1"}}), nil)
 	if err != nil {
@@ -119,6 +124,18 @@ func (c *Client) InspectContainer(ctx context.Context, id string) (ContainerInsp
 	var out ContainerInspect
 	if err := c.doJSON(req, &out); err != nil {
 		return ContainerInspect{}, err
+	}
+	return out, nil
+}
+
+func (c *Client) InspectImage(ctx context.Context, name string) (ImageInspect, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.mustURL("/images/"+name+"/json", nil), nil)
+	if err != nil {
+		return ImageInspect{}, err
+	}
+	var out ImageInspect
+	if err := c.doJSON(req, &out); err != nil {
+		return ImageInspect{}, err
 	}
 	return out, nil
 }

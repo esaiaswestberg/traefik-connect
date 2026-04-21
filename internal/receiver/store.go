@@ -198,7 +198,11 @@ func (s *Store) reconcileAll() error {
 func (s *Store) reconcileWorker(record workerRecord) ([]string, []model.ValidationIssue, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	desired, issues, err := buildDesiredStubs(record.Snapshot, s.dockerNetwork, s.stubImage, s.token)
+	imageInfo, err := s.docker.InspectImage(ctx, s.stubImage)
+	if err != nil {
+		return nil, nil, fmt.Errorf("inspect stub image: %w", err)
+	}
+	desired, issues, err := buildDesiredStubs(record.Snapshot, s.dockerNetwork, s.stubImage, imageInfo.ID, s.token)
 	if err != nil {
 		return nil, issues, err
 	}
@@ -213,7 +217,7 @@ func (s *Store) reconcileWorker(record workerRecord) ([]string, []model.Validati
 	managed := make([]string, 0, len(desiredByName))
 	for name, spec := range desiredByName {
 		if current, ok := existing[name]; ok {
-			if current.DesiredHash == spec.DesiredHash && current.Running {
+			if current.DesiredHash == spec.DesiredHash && current.ImageID == spec.ImageID && current.Running {
 				managed = append(managed, name)
 				continue
 			}
@@ -270,6 +274,7 @@ func (s *Store) listManagedContainers(ctx context.Context, workerID string) (map
 			ID:          ins.ID,
 			Name:        name,
 			DesiredHash: labels[managedLabelPrefix+"desired-hash"],
+			ImageID:     ins.Image,
 			Running:     ins.State.Running,
 		}
 	}
@@ -340,6 +345,7 @@ type managedContainer struct {
 	ID          string
 	Name        string
 	DesiredHash string
+	ImageID     string
 	Running     bool
 }
 
@@ -350,11 +356,12 @@ type stubSpec struct {
 	ContainerName string
 	ServiceName   string
 	DesiredHash   string
+	ImageID       string
 	Labels        map[string]string
 	Env           []string
 }
 
-func buildDesiredStubs(snapshot model.Snapshot, dockerNetwork, stubImage, token string) ([]stubSpec, []model.ValidationIssue, error) {
+func buildDesiredStubs(snapshot model.Snapshot, dockerNetwork, stubImage, stubImageID, token string) ([]stubSpec, []model.ValidationIssue, error) {
 	if snapshot.AdvertiseAddr == "" {
 		return nil, []model.ValidationIssue{{
 			WorkerID: snapshot.WorkerID,
@@ -389,6 +396,7 @@ func buildDesiredStubs(snapshot model.Snapshot, dockerNetwork, stubImage, token 
 			spec := stubSpec{
 				Name:          util.SanitizeName("tc-" + util.ShortHash(snapshot.WorkerID, c.ID, serviceName)),
 				Image:         stubImage,
+				ImageID:       stubImageID,
 				ContainerID:   c.ID,
 				ContainerName: c.Name,
 				ServiceName:   serviceName,
@@ -450,6 +458,7 @@ func buildDesiredStubs(snapshot model.Snapshot, dockerNetwork, stubImage, token 
 				"container": c.ID,
 				"service":   serviceName,
 				"target":    spec.Env[0],
+				"image_id":  spec.ImageID,
 				"labels":    spec.Labels,
 				"image":     spec.Image,
 			})
