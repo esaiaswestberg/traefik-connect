@@ -70,7 +70,11 @@ func TestServerWaitEndpoint(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("wait status = %d", rec.Code)
 	}
-	if got := rec.Body.String(); !strings.Contains(got, "waited 10ms") {
+	got := rec.Body.String()
+	if !strings.Contains(got, "waiting 10ms") {
+		t.Fatalf("wait body missing initial chunk = %q", got)
+	}
+	if !strings.Contains(got, "waited 10ms") {
 		t.Fatalf("wait body = %q", got)
 	}
 }

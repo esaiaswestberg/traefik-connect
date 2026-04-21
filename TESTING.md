@@ -37,10 +37,10 @@ If you are testing on one machine, add `--resolve ...:127.0.0.1` to the curl exa
 
 ## Long-running HTTP
 
-Use the `/wait` endpoint to keep a connection open without streaming data.
+Use the `/wait` endpoint to verify long-lived HTTP streaming and heartbeat delivery.
 
 ```bash
-curl -k -v \
+curl -k -N -v \
   https://stream.example.test/wait?duration=45s \
   --resolve stream.example.test:443:127.0.0.1
 ```
@@ -48,7 +48,9 @@ curl -k -v \
 Expected result:
 
 - the connection stays open until the timeout expires
-- the response body is `waited 45s`
+- the response begins immediately with `waiting 45s`
+- you see at least one `still waiting after ...` heartbeat before the final line
+- the response ends with `waited 45s`
 
 ## Streaming events
 
@@ -73,7 +75,7 @@ Use `--data-binary` for raw uploads or `-F` for multipart uploads.
 Raw upload:
 
 ```bash
-dd if=/dev/urandom of=/tmp/traefik-connect-upload.bin bs=1m count=20
+dd if=/dev/urandom of=/tmp/traefik-connect-upload.bin bs=1M count=20
 curl -k -X POST \
   --data-binary @/tmp/traefik-connect-upload.bin \
   https://stream.example.test/upload \

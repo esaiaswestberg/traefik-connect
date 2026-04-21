@@ -4,9 +4,21 @@ entryPoints:
   # Public HTTP entry point used for ACME HTTP-01 and HTTP-to-HTTPS redirects.
   web:
     address: ":80"
+    transport:
+      respondingTimeouts:
+        # Streaming and large uploads need explicit no-timeout defaults at the edge.
+        readTimeout: 0s
+        writeTimeout: 0s
+        idleTimeout: 0s
   # Public HTTPS entry point used for real application traffic.
   websecure:
     address: ":443"
+    transport:
+      respondingTimeouts:
+        # Keep HTTPS ingress equally permissive for long-lived streams.
+        readTimeout: 0s
+        writeTimeout: 0s
+        idleTimeout: 0s
 
 certificatesResolvers:
   # ACME resolver referenced by the worker example labels.

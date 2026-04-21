@@ -141,6 +141,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	_, _ = fmt.Fprintf(w, ": %s starting\n\n", s.cfg.Name)
+	flusher.Flush()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for i := 0; i < 10; i++ {
@@ -161,14 +163,33 @@ func (s *Server) handleWait(w http.ResponseWriter, r *http.Request) {
 			dur = parsed
 		}
 	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	started := time.Now()
+	_, _ = fmt.Fprintf(w, "waiting %s\n", dur)
+	flusher.Flush()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
 	timer := time.NewTimer(dur)
 	defer timer.Stop()
-	select {
-	case <-r.Context().Done():
-		return
-	case <-timer.C:
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = fmt.Fprintf(w, "waited %s\n", dur)
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-timer.C:
+			_, _ = fmt.Fprintf(w, "waited %s\n", dur)
+			flusher.Flush()
+			return
+		case <-ticker.C:
+			elapsed := time.Since(started).Truncate(time.Second)
+			_, _ = fmt.Fprintf(w, "still waiting after %s\n", elapsed)
+			flusher.Flush()
+		}
 	}
 }
 
