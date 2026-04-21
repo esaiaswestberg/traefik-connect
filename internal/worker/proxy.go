@@ -83,17 +83,10 @@ func (s *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	for k, values := range resp.Header {
-		for _, v := range values {
-			w.Header().Add(k, v)
-		}
-	}
-	if resp.StatusCode == 0 {
-		resp.StatusCode = http.StatusOK
-	}
-	w.WriteHeader(resp.StatusCode)
-	if len(resp.Body) > 0 {
-		_, _ = w.Write(resp.Body)
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		http.Error(w, fmt.Sprintf("encode proxy response: %v", err), http.StatusInternalServerError)
+		return
 	}
 }
 
