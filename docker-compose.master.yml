@@ -31,5 +31,6 @@ services:
     volumes:
       - ./examples/traefik-static.yml:/etc/traefik/traefik.yml:ro
       - ./render:/etc/traefik/dynamic:ro
+      - ./acme:/etc/traefik/acme
     depends_on:
       - receiver

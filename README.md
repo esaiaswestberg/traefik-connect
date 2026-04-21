@@ -14,6 +14,7 @@ It replaces Docker Swarm, Consul, or remote Docker access with two lightweight s
 - The agent parses Traefik HTTP labels, resolves a backend URL that the master can actually reach, and sends a full snapshot to the master over HTTPS or HTTP with bearer auth plus HMAC signing.
 - The master receiver validates the snapshot, stores it on disk, and renders one YAML file per worker into the Traefik file-provider directory.
 - Traefik watches that directory and applies changes automatically.
+- The master example also defines an ACME resolver named `letsencrypt` so routers that set `tls.certresolver=letsencrypt` are accepted.
 
 ### Backend resolution order
 
@@ -51,6 +52,7 @@ This starts:
 - the receiver on port `8080`
 - Traefik on ports `80` and `443`
 - a watched dynamic config directory at `./render`
+- an ACME storage directory at `./acme`
 
 The receiver exposes:
 
@@ -93,6 +95,8 @@ labels:
 - Use a long random shared token.
 - Prefer HTTPS between worker and receiver in anything beyond a lab.
 - The receiver rejects requests with bad auth, invalid signatures, oversized bodies, and stale timestamps.
+- The bundled master example uses the Let's Encrypt staging CA so the stack can be tested without production issuance pressure.
+- If you use the `letsencrypt` resolver, make sure your domain points at the master and port 80 is reachable for ACME HTTP-01 validation.
 
 ## Operational behavior
 
