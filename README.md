@@ -83,11 +83,17 @@ The worker agent exposes:
 labels:
   traefik-sync.enable: "true"
   traefik.http.routers.whoami.rule: Host(`whoami.example.test`)
-  traefik.http.routers.whoami.entrypoints: web
-  traefik.http.routers.whoami.middlewares: secure
-  traefik.http.routers.whoami.service: whoami-svc
+  traefik.http.routers.whoami-http.entrypoints: web
+  traefik.http.routers.whoami-http.middlewares: secure
+  traefik.http.routers.whoami-http.service: whoami-svc
+  traefik.http.routers.whoami-https.entrypoints: websecure
+  traefik.http.routers.whoami-https.tls: "true"
+  traefik.http.routers.whoami-https.tls.certresolver: letsencrypt
+  traefik.http.routers.whoami-https.service: whoami-svc
   traefik.http.services.whoami-svc.loadbalancer.server.port: "80"
+  traefik.http.services.whoami-svc.loadbalancer.passhostheader: "true"
   traefik.http.middlewares.secure.redirectscheme.scheme: https
+  traefik.http.middlewares.secure.redirectscheme.permanent: "true"
 ```
 
 ## Security notes
