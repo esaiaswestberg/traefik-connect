@@ -8,6 +8,14 @@
 
 The worker agent discovers opted-in Docker containers locally. The master receiver turns those snapshots into master-local stub containers. Traefik on the master discovers those stubs through its Docker provider and sends traffic through them back to the worker proxy. The proxy path streams request and response bodies directly, so large uploads, downloads, WebSockets, and long-lived HTTP connections are not wrapped in JSON.
 
+Every process exposes a small runtime marker so you can confirm which binary is actually serving traffic:
+
+- `receiver`: `GET /version`
+- `agent`: `GET /version` on the worker status port
+- `proxy`: `GET /version` on the worker proxy port
+- `stub`: `GET /version` on the master-local stub container
+- `testapp`: `GET /version` on the streaming test services
+
 ## How it works
 
 1. A worker container opts in with `traefik-connect.enable=true`.
@@ -168,6 +176,7 @@ If you want real certificates:
 - `404 page not found` usually means Traefik did not match a router on `web` or `websecure`.
 - `unauthorized` from the browser usually means the master stub and worker proxy are not using the same shared token or the wrong code is running.
 - If large uploads or downloads stall, check the worker proxy listener and the master stub listener for timeout settings.
+- If you suspect stale containers after a rebuild, check `/version` on the receiver, worker proxy, or `streamlab` service and compare the `started_at` timestamp.
 - `client version 1.24 is too old` means Traefik is too old for the Docker daemon on the master and needs a newer image.
 - If curl returns `unexpected eof while reading`, check the host-to-container port mapping for Traefik.
 

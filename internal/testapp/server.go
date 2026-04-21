@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"example.com/traefik-connect/internal/config"
+	"example.com/traefik-connect/internal/runtimeinfo"
 )
 
 type Server struct {
@@ -50,6 +52,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
+	})
+	s.mux.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(runtimeinfo.Current("testapp"))
 	})
 	s.mux.HandleFunc("/upload", s.handleUpload)
 	s.mux.HandleFunc("/events", s.handleEvents)

@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 
 	"example.com/traefik-connect/internal/proxyheaders"
 	"example.com/traefik-connect/internal/model"
+	"example.com/traefik-connect/internal/runtimeinfo"
 )
 
 type ProxyServer struct {
@@ -33,6 +35,10 @@ func NewProxyServer(agent *Agent, log *slog.Logger) *ProxyServer {
 	ps.mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
+	})
+	ps.mux.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(runtimeinfo.Current("proxy"))
 	})
 	ps.mux.HandleFunc("/", ps.handleProxy)
 	return ps

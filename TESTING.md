@@ -33,6 +33,13 @@ The testing profile starts two extra containers:
 - `streamlab` at `https://stream.example.test`
 - `medialab` at `https://media.example.test`
 
+If a request behaves like stale code is still running, check the runtime markers first:
+
+- `curl http://<master-lan-ip>:18180/version`
+- `curl http://<worker-lan-ip>:8081/version`
+- `curl http://<worker-lan-ip>:8090/version`
+- `curl -k https://stream.example.test/version --resolve stream.example.test:443:127.0.0.1`
+
 If you are testing on one machine, add `--resolve ...:127.0.0.1` to the curl examples below.
 
 ## Long-running HTTP
@@ -142,3 +149,4 @@ Expected result:
 - `unexpected eof while reading` usually means Traefik is published on the wrong host/container ports.
 - `unauthorized` usually means the shared token does not match between master and worker.
 - If a large upload stalls, check the worker proxy listener and the master stub for timeout settings.
+- If the streaming behavior looks wrong after a rebuild, compare the `started_at` field from `/version` against the time you recreated the stack.

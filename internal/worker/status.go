@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"example.com/traefik-connect/internal/runtimeinfo"
 )
 
 type StatusServer struct {
@@ -25,6 +27,10 @@ func NewStatusServer(agent *Agent) *StatusServer {
 	ss.mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
+	})
+	ss.mux.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(runtimeinfo.Current("agent"))
 	})
 	ss.mux.HandleFunc("/debug/state", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

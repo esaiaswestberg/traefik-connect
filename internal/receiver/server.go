@@ -10,6 +10,7 @@ import (
 
 	"example.com/traefik-connect/internal/api"
 	"example.com/traefik-connect/internal/model"
+	"example.com/traefik-connect/internal/runtimeinfo"
 )
 
 type Server struct {
@@ -42,6 +43,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
+	})
+	s.mux.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(runtimeinfo.Current("receiver"))
 	})
 	s.mux.HandleFunc("/v1/snapshot", s.handleSnapshot)
 	s.mux.HandleFunc("/v1/status", s.handleStatus)

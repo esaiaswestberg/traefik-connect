@@ -2,6 +2,7 @@ package stub
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"example.com/traefik-connect/internal/config"
 	"example.com/traefik-connect/internal/proxyheaders"
+	"example.com/traefik-connect/internal/runtimeinfo"
 )
 
 type Server struct {
@@ -58,6 +60,10 @@ func New(cfg config.StubConfig, log *slog.Logger) (*Server, error) {
 	s.mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
+	})
+	s.mux.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(runtimeinfo.Current("stub"))
 	})
 	s.mux.HandleFunc("/", s.handle)
 	return s, nil

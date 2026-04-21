@@ -10,6 +10,7 @@ import (
 
 	"example.com/traefik-connect/internal/config"
 	"example.com/traefik-connect/internal/receiver"
+	"example.com/traefik-connect/internal/runtimeinfo"
 	"example.com/traefik-connect/internal/stub"
 	"example.com/traefik-connect/internal/testapp"
 	"example.com/traefik-connect/internal/worker"
@@ -28,6 +29,7 @@ func main() {
 	var err error
 	switch os.Args[1] {
 	case "agent":
+		logger.Info("starting process", "component", "agent", "runtime", runtimeinfo.Current("agent"))
 		var cfg config.AgentConfig
 		cfg, err = config.LoadAgent(os.Args[2:])
 		if err == nil {
@@ -38,6 +40,7 @@ func main() {
 			}
 		}
 	case "receiver":
+		logger.Info("starting process", "component", "receiver", "runtime", runtimeinfo.Current("receiver"))
 		var cfg config.ReceiverConfig
 		var tlsCfg config.TLSConfig
 		cfg, tlsCfg, err = config.LoadReceiver(os.Args[2:])
@@ -49,6 +52,7 @@ func main() {
 			}
 		}
 	case "stub":
+		logger.Info("starting process", "component", "stub", "runtime", runtimeinfo.Current("stub"))
 		var cfg config.StubConfig
 		cfg, err = config.LoadStub(os.Args[2:])
 		if err == nil {
@@ -59,6 +63,7 @@ func main() {
 			}
 		}
 	case "testapp":
+		logger.Info("starting process", "component", "testapp", "runtime", runtimeinfo.Current("testapp"))
 		var cfg config.TestAppConfig
 		cfg, err = config.LoadTestApp(os.Args[2:])
 		if err == nil {
