@@ -10,6 +10,7 @@ import (
 
 	"example.com/traefik-connect/internal/config"
 	"example.com/traefik-connect/internal/receiver"
+	"example.com/traefik-connect/internal/stub"
 	"example.com/traefik-connect/internal/worker"
 )
 
@@ -46,6 +47,16 @@ func main() {
 				err = app.Run(ctx, tlsCfg)
 			}
 		}
+	case "stub":
+		var cfg config.StubConfig
+		cfg, err = config.LoadStub(os.Args[2:])
+		if err == nil {
+			var srv *stub.Server
+			srv, err = stub.New(cfg, logger)
+			if err == nil {
+				err = srv.Listen(ctx)
+			}
+		}
 	default:
 		usage()
 		os.Exit(2)
@@ -58,5 +69,5 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: traefik-connect [agent|receiver] [flags]")
+	fmt.Fprintln(os.Stderr, "usage: traefik-connect [agent|receiver|stub] [flags]")
 }

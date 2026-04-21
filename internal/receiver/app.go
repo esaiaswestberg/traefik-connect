@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"example.com/traefik-connect/internal/config"
+	"example.com/traefik-connect/internal/dockerx"
 )
 
 type App struct {
@@ -17,7 +18,8 @@ type App struct {
 }
 
 func NewApp(cfg config.ReceiverConfig, token string, log *slog.Logger) (*App, error) {
-	store := NewStore(cfg.StateDir, cfg.RenderDir, cfg.StateTTL, log)
+	docker := dockerx.New(cfg.DockerSocket, 15*time.Second)
+	store := NewStore(cfg.StateDir, cfg.StateTTL, docker, cfg.DockerNetwork, cfg.StubImage, token, log)
 	if err := store.Load(); err != nil {
 		return nil, err
 	}

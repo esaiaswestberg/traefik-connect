@@ -1,8 +1,6 @@
 package receiver
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -10,63 +8,61 @@ import (
 	"example.com/traefik-connect/internal/model"
 )
 
-func TestStoreUpsertRendersSnapshot(t *testing.T) {
-	stateDir := t.TempDir()
-	renderDir := t.TempDir()
-	store := NewStore(stateDir, renderDir, time.Hour, nil)
+func TestBuildDesiredStubs(t *testing.T) {
 	snapshot := model.Snapshot{
-		WorkerID:   "worker-a",
-		CapturedAt: time.Date(2026, 4, 21, 10, 0, 0, 0, time.UTC),
-		Version:    "v1",
+		WorkerID:      "worker-a",
+		AdvertiseAddr: "192.168.1.10",
+		ProxyPort:     8090,
+		CapturedAt:    time.Date(2026, 4, 21, 10, 0, 0, 0, time.UTC),
+		Version:       "v2",
 		Containers: []model.ContainerSpec{
 			{
 				ID:   "abcdef1234567890",
 				Name: "web",
 				Routers: map[string]model.RouterSpec{
-					"web": {Rule: "Host(`web.example.test`)", Service: "websvc"},
+					"web": {Rule: "Host(`web.example.test`)", Service: "websvc", Middlewares: []string{"secure"}},
 				},
 				Services: map[string]model.ServiceSpec{
-					"websvc": {BackendURL: "http://192.168.1.10:18080"},
+					"websvc": {BackendURL: "http://172.18.0.5:8080", PassHostHeader: boolPtr(true)},
+				},
+				Middlewares: map[string]model.MiddlewareSpec{
+					"secure": {RedirectScheme: &model.RedirectScheme{Scheme: "https", Permanent: boolPtr(true)}},
 				},
 			},
 		},
 	}
 
-	stored, issues, file, err := store.Upsert(snapshot)
+	specs, issues, err := buildDesiredStubs(snapshot, "traefik-connect", "traefik-connect", "secret")
 	if err != nil {
-		t.Fatalf("Upsert() error = %v", err)
+		t.Fatalf("buildDesiredStubs() error = %v", err)
 	}
 	if len(issues) != 0 {
 		t.Fatalf("expected no issues, got %v", issues)
 	}
-	if file == "" {
-		t.Fatal("expected render file")
+	if len(specs) != 1 {
+		t.Fatalf("expected 1 stub, got %d", len(specs))
 	}
-	data, err := os.ReadFile(filepath.Join(renderDir, "worker-a.yaml"))
-	if err != nil {
-		t.Fatalf("read render file: %v", err)
+	spec := specs[0]
+	if spec.Labels["traefik.enable"] != "true" {
+		t.Fatalf("expected traefik label, got %#v", spec.Labels)
 	}
-	if !strings.Contains(string(data), "websvc") {
-		t.Fatalf("render missing service: %s", string(data))
+	if got := spec.Labels["traefik.http.routers.web.rule"]; got != "Host(`web.example.test`)" {
+		t.Fatalf("router rule = %q", got)
 	}
-	if stored.Hash == "" {
-		t.Fatal("expected hash")
+	if got := spec.Labels["traefik.http.services.websvc.loadbalancer.server.port"]; got != "8080" {
+		t.Fatalf("service port = %q", got)
+	}
+	if got := spec.Env[0]; got != "STUB_TARGET_URL=http://192.168.1.10:8090" {
+		t.Fatalf("stub target = %q", got)
 	}
 }
 
-func TestStoreUpsertSkipsInvalidContainers(t *testing.T) {
-	stateDir := t.TempDir()
-	renderDir := t.TempDir()
-	store := NewStore(stateDir, renderDir, time.Hour, nil)
+func TestValidateSnapshotRequiresProxyMetadata(t *testing.T) {
 	snapshot := model.Snapshot{
 		WorkerID:   "worker-a",
-		CapturedAt: time.Date(2026, 4, 21, 10, 0, 0, 0, time.UTC),
-		Version:    "v1",
+		CapturedAt: time.Now().UTC(),
+		Version:    "v2",
 		Containers: []model.ContainerSpec{
-			{
-				ID:   "badbadbadbad",
-				Name: "bad",
-			},
 			{
 				ID:   "abcdef1234567890",
 				Name: "web",
@@ -74,24 +70,53 @@ func TestStoreUpsertSkipsInvalidContainers(t *testing.T) {
 					"web": {Rule: "Host(`web.example.test`)", Service: "websvc"},
 				},
 				Services: map[string]model.ServiceSpec{
-					"websvc": {BackendURL: "http://192.168.1.10:18080"},
+					"websvc": {BackendURL: "http://172.18.0.5:8080"},
 				},
 			},
 		},
 	}
 
-	_, issues, _, err := store.Upsert(snapshot)
-	if err != nil {
-		t.Fatalf("Upsert() error = %v", err)
-	}
+	issues, cleaned := validateSnapshot(snapshot)
 	if len(issues) == 0 {
 		t.Fatal("expected validation issues")
 	}
-	data, err := os.ReadFile(filepath.Join(renderDir, "worker-a.yaml"))
-	if err != nil {
-		t.Fatalf("read render file: %v", err)
-	}
-	if strings.Contains(string(data), "badbadbadbad") {
-		t.Fatalf("render should exclude invalid container: %s", string(data))
+	if cleaned.AdvertiseAddr != "" || cleaned.ProxyPort != 0 {
+		t.Fatalf("expected snapshot metadata to remain unset in cleaned snapshot")
 	}
 }
+
+func TestValidateSnapshotDropsInvalidContainers(t *testing.T) {
+	snapshot := model.Snapshot{
+		WorkerID:      "worker-a",
+		AdvertiseAddr: "192.168.1.10",
+		ProxyPort:     8090,
+		CapturedAt:    time.Now().UTC(),
+		Version:       "v2",
+		Containers: []model.ContainerSpec{
+			{ID: "bad", Name: "bad"},
+			{
+				ID:   "abcdef1234567890",
+				Name: "web",
+				Routers: map[string]model.RouterSpec{
+					"web": {Rule: "Host(`web.example.test`)", Service: "websvc"},
+				},
+				Services: map[string]model.ServiceSpec{
+					"websvc": {BackendURL: "http://172.18.0.5:8080"},
+				},
+			},
+		},
+	}
+
+	issues, cleaned := validateSnapshot(snapshot)
+	if len(issues) == 0 {
+		t.Fatal("expected validation issues")
+	}
+	if len(cleaned.Containers) != 1 {
+		t.Fatalf("expected one valid container, got %d", len(cleaned.Containers))
+	}
+	if !strings.Contains(cleaned.Containers[0].Name, "web") {
+		t.Fatalf("unexpected cleaned container: %#v", cleaned.Containers[0])
+	}
+}
+
+func boolPtr(v bool) *bool { return &v }

@@ -383,22 +383,16 @@ func resolveBackendURL(labels map[string]string, ins dockerx.ContainerInspect, a
 			return "", "", 0, err
 		}
 	}
-	bindings := bindingsForPort(ins, port)
-	if len(bindings) == 0 {
-		if strings.EqualFold(ins.HostConfig.NetworkMode, "host") {
-			if advertiseAddr == "" {
-				return "", "", 0, fmt.Errorf("host network container requires advertise address")
-			}
-			return fmt.Sprintf("http://%s:%d", advertiseAddr, port), "host-network", port, nil
+	if strings.EqualFold(ins.HostConfig.NetworkMode, "host") {
+		if advertiseAddr == "" {
+			return "", "", 0, fmt.Errorf("host network container requires advertise address")
 		}
-		return "", "", 0, fmt.Errorf("no published host port for container port %d", port)
+		return fmt.Sprintf("http://%s:%d", advertiseAddr, port), "host-network", port, nil
 	}
-
-	chosen, err := chooseBinding(bindings, advertiseAddr)
-	if err != nil {
-		return "", "", 0, err
+	if addr := preferredContainerAddr(ins, labels); addr != "" {
+		return fmt.Sprintf("http://%s:%d", addr, port), "container-ip", port, nil
 	}
-	return fmt.Sprintf("http://%s:%s", chosen.HostIp, chosen.HostPort), "published-port", port, nil
+	return "", "", 0, fmt.Errorf("no reachable container address for port %d", port)
 }
 
 func backendScheme(labels map[string]string, def string) string {
@@ -439,29 +433,27 @@ func parseContainerPort(raw string) (int, bool) {
 	return n, true
 }
 
-func bindingsForPort(ins dockerx.ContainerInspect, port int) []dockerx.PortBinding {
-	key := fmt.Sprintf("%d/tcp", port)
-	if v, ok := ins.NetworkSettings.Ports[key]; ok {
-		return v
+func preferredContainerAddr(ins dockerx.ContainerInspect, labels map[string]string) string {
+	if ins.NetworkSettings.IPAddress != "" {
+		return ins.NetworkSettings.IPAddress
 	}
-	if v, ok := ins.HostConfig.PortBindings[key]; ok {
-		return v
+	if len(ins.NetworkSettings.Networks) == 0 {
+		return ""
 	}
-	return nil
-}
-
-func chooseBinding(bindings []dockerx.PortBinding, advertiseAddr string) (dockerx.PortBinding, error) {
-	for _, b := range bindings {
-		host := strings.TrimSpace(b.HostIp)
-		if host == "" || host == "0.0.0.0" || host == "::" {
-			if advertiseAddr == "" {
-				return dockerx.PortBinding{}, fmt.Errorf("advertise address required to resolve wildcard host binding")
-			}
-			return dockerx.PortBinding{HostIp: advertiseAddr, HostPort: b.HostPort}, nil
-		}
-		if host != "127.0.0.1" && host != "::1" {
-			return b, nil
+	if preferred := strings.TrimSpace(labels["traefik.docker.network"]); preferred != "" {
+		if net, ok := ins.NetworkSettings.Networks[preferred]; ok && net.IPAddress != "" {
+			return net.IPAddress
 		}
 	}
-	return dockerx.PortBinding{}, fmt.Errorf("only localhost bindings found; worker master cannot reach the service")
+	names := make([]string, 0, len(ins.NetworkSettings.Networks))
+	for name := range ins.NetworkSettings.Networks {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if ip := strings.TrimSpace(ins.NetworkSettings.Networks[name].IPAddress); ip != "" {
+			return ip
+		}
+	}
+	return ""
 }

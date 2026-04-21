@@ -5,6 +5,7 @@ import "time"
 type Snapshot struct {
 	WorkerID      string          `json:"worker_id" yaml:"worker_id"`
 	AdvertiseAddr string          `json:"advertise_addr,omitempty" yaml:"advertise_addr,omitempty"`
+	ProxyPort     int             `json:"proxy_port,omitempty" yaml:"proxy_port,omitempty"`
 	CapturedAt    time.Time       `json:"captured_at" yaml:"captured_at"`
 	Version       string          `json:"version" yaml:"version"`
 	Hash          string          `json:"hash" yaml:"hash"`

@@ -1,5 +1,6 @@
 services:
   receiver:
+    image: traefik-connect
     build: .
     command:
       - receiver
@@ -9,17 +10,25 @@ services:
       - ${RECEIVER_TOKEN}
       - --state-dir
       - /state
-      - --render-dir
-      - /render
+      - --docker-socket
+      - /var/run/docker.sock
+      - --docker-network
+      - traefik-connect
+      - --stub-image
+      - traefik-connect
     environment:
       RECEIVER_TOKEN: ${RECEIVER_TOKEN}
       RECEIVER_STATE_DIR: /state
-      RECEIVER_RENDER_DIR: /render
+      RECEIVER_DOCKER_SOCKET: /var/run/docker.sock
+      RECEIVER_DOCKER_NETWORK: traefik-connect
+      RECEIVER_STUB_IMAGE: traefik-connect
     volumes:
       - ./state:/state
-      - ./render:/render
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "8080:8080"
+    networks:
+      - traefik-connect
 
   traefik:
     image: traefik:v3.1
@@ -30,7 +39,13 @@ services:
       - "443:443"
     volumes:
       - ./examples/traefik-static.yml:/etc/traefik/traefik.yml:ro
-      - ./render:/etc/traefik/dynamic:ro
       - ./acme:/etc/traefik/acme
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       - receiver
+    networks:
+      - traefik-connect
+
+networks:
+  traefik-connect:
+    name: traefik-connect

@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,8 +32,9 @@ type Agent struct {
 
 	trigger chan struct{}
 
-	mu     sync.RWMutex
-	status AgentStatus
+	mu       sync.RWMutex
+	status   AgentStatus
+	snapshot model.Snapshot
 }
 
 type AgentStatus struct {
@@ -61,9 +64,15 @@ func NewAgent(cfg config.AgentConfig, log *slog.Logger) (*Agent, error) {
 
 func (a *Agent) Run(ctx context.Context) error {
 	statusServer := NewStatusServer(a)
+	proxyServer := NewProxyServer(a, a.log)
 	go func() {
 		if err := statusServer.Listen(ctx, a.cfg.StatusListenAddr); err != nil && !errors.Is(err, context.Canceled) {
 			a.log.Error("status server stopped", "error", err)
+		}
+	}()
+	go func() {
+		if err := proxyServer.Listen(ctx, a.cfg.ProxyListenAddr); err != nil && !errors.Is(err, context.Canceled) {
+			a.log.Error("proxy server stopped", "error", err)
 		}
 	}()
 
@@ -116,6 +125,7 @@ func (a *Agent) syncOnce(ctx context.Context) error {
 	snapshot := model.Snapshot{
 		WorkerID:      a.cfg.WorkerID,
 		AdvertiseAddr: a.cfg.AdvertiseAddr,
+		ProxyPort:     listenPort(a.cfg.ProxyListenAddr),
 		CapturedAt:    time.Now().UTC(),
 		Version:       "v1",
 		Containers:    make([]model.ContainerSpec, 0, len(containers)),
@@ -147,7 +157,7 @@ func (a *Agent) syncOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL.JoinPath("/v1/snapshot").String(), io.NopCloser(bytes.NewReader(body)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL.JoinPath("/v1/snapshot").String(), bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -175,8 +185,9 @@ func (a *Agent) syncOnce(ctx context.Context) error {
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return err
 	}
+	a.storeSnapshot(snapshot)
 	a.setSuccess(snapshot.Hash, len(snapshot.Containers))
-	a.log.Info("snapshot synced", "worker_id", snapshot.WorkerID, "containers", len(snapshot.Containers), "hash", snapshot.Hash, "rendered_file", result.RenderedFile)
+	a.log.Info("snapshot synced", "worker_id", snapshot.WorkerID, "containers", len(snapshot.Containers), "hash", snapshot.Hash, "managed_containers", result.ManagedContainers)
 	return nil
 }
 
@@ -240,8 +251,31 @@ func (a *Agent) Status() AgentStatus {
 	return a.status
 }
 
+func (a *Agent) storeSnapshot(snapshot model.Snapshot) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.snapshot = snapshot
+}
+
 func snapshotForHash(snapshot model.Snapshot) any {
 	cp := snapshot
 	cp.Hash = ""
 	return cp
+}
+
+func listenPort(addr string) int {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		if strings.HasPrefix(addr, ":") {
+			if n, parseErr := strconv.Atoi(strings.TrimPrefix(addr, ":")); parseErr == nil {
+				return n
+			}
+		}
+		return 8090
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n <= 0 {
+		return 8090
+	}
+	return n
 }

@@ -6,7 +6,7 @@ import (
 	"example.com/traefik-connect/internal/dockerx"
 )
 
-func TestBuildContainerResolvesPublishedPort(t *testing.T) {
+func TestBuildContainerResolvesContainerIp(t *testing.T) {
 	ins := dockerx.ContainerInspect{}
 	ins.ID = "abcdef1234567890"
 	ins.Name = "/web"
@@ -24,15 +24,17 @@ func TestBuildContainerResolvesPublishedPort(t *testing.T) {
 		"traefik.http.middlewares.secure.redirectscheme.scheme":    "https",
 		"traefik.http.middlewares.secure.redirectscheme.permanent": "true",
 	}
-	ins.NetworkSettings.Ports = map[string][]dockerx.PortBinding{
-		"8080/tcp": {{HostIp: "0.0.0.0", HostPort: "18080"}},
+	ins.NetworkSettings.Networks = map[string]struct {
+		IPAddress string `json:"IPAddress"`
+	}{
+		"bridge": {IPAddress: "172.18.0.5"},
 	}
 
 	spec, _, err := BuildContainer(ins, "worker-a", "192.168.1.10")
 	if err != nil {
 		t.Fatalf("BuildContainer() error = %v", err)
 	}
-	if got := spec.Services["websvc"].BackendURL; got != "http://192.168.1.10:18080" {
+	if got := spec.Services["websvc"].BackendURL; got != "http://172.18.0.5:8080" {
 		t.Fatalf("BackendURL = %q", got)
 	}
 	if spec.Routers["web"].Service != "websvc" {
@@ -60,7 +62,7 @@ func TestBuildContainerRejectsDisabledOptIn(t *testing.T) {
 	}
 }
 
-func TestBuildContainerRejectsLocalhostBinding(t *testing.T) {
+func TestBuildContainerRejectsMissingReachableAddress(t *testing.T) {
 	ins := dockerx.ContainerInspect{}
 	ins.ID = "abcdef1234567890"
 	ins.Name = "/web"
@@ -70,10 +72,7 @@ func TestBuildContainerRejectsLocalhostBinding(t *testing.T) {
 		"traefik.http.routers.web.service":                      "websvc",
 		"traefik.http.services.websvc.loadbalancer.server.port": "8080",
 	}
-	ins.NetworkSettings.Ports = map[string][]dockerx.PortBinding{
-		"8080/tcp": {{HostIp: "127.0.0.1", HostPort: "18080"}},
-	}
-	_, _, err := BuildContainer(ins, "worker-a", "192.168.1.10")
+	_, _, err := BuildContainer(ins, "worker-a", "")
 	if err == nil {
 		t.Fatal("expected error")
 	}

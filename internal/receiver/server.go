@@ -79,18 +79,18 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "captured_at mismatch", http.StatusBadRequest)
 		return
 	}
-	stored, issues, renderedFile, err := s.store.Upsert(snapshot)
+	stored, issues, managed, err := s.store.Upsert(snapshot)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	resp := api.SnapshotResponse{
-		Accepted:     true,
-		WorkerID:     stored.WorkerID,
-		Hash:         stored.Hash,
-		RenderedFile: renderedFile,
-		Issues:       issues,
-		Message:      "snapshot accepted",
+		Accepted:          true,
+		WorkerID:          stored.WorkerID,
+		Hash:              stored.Hash,
+		ManagedContainers: managed,
+		Issues:            issues,
+		Message:           "snapshot accepted",
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
@@ -104,12 +104,12 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	resp := api.StatusResponse{Workers: make([]api.WorkerStatus, 0)}
 	for _, st := range s.store.Statuses() {
 		resp.Workers = append(resp.Workers, api.WorkerStatus{
-			WorkerID:       st.WorkerID,
-			CapturedAt:     st.CapturedAt,
-			UpdatedAt:      st.UpdatedAt,
-			Hash:           st.Hash,
-			ContainerCount: st.ContainerCount,
-			RenderFile:     st.RenderFile,
+			WorkerID:          st.WorkerID,
+			CapturedAt:        st.CapturedAt,
+			UpdatedAt:         st.UpdatedAt,
+			Hash:              st.Hash,
+			ContainerCount:    st.ContainerCount,
+			ManagedContainers: st.ManagedContainers,
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
