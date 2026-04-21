@@ -1,18 +1,16 @@
 package worker
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"time"
 
-	"example.com/traefik-connect/internal/api"
+	"example.com/traefik-connect/internal/proxyheaders"
 	"example.com/traefik-connect/internal/model"
 )
 
@@ -36,7 +34,7 @@ func NewProxyServer(agent *Agent, log *slog.Logger) *ProxyServer {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	ps.mux.HandleFunc("/v1/proxy", ps.handleProxy)
+	ps.mux.HandleFunc("/", ps.handleProxy)
 	return ps
 }
 
@@ -44,8 +42,6 @@ func (s *ProxyServer) Listen(ctx context.Context, addr string) error {
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           s.mux,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	errCh := make(chan error, 1)
@@ -65,101 +61,65 @@ func (s *ProxyServer) Listen(ctx context.Context, addr string) error {
 }
 
 func (s *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
 		return
 	}
-	if !bearerOK(r, s.agent.cfg.Token) {
+	if !tokenOK(r, s.agent.cfg.Token) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	var req api.ProxyRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("invalid json: %v", err), http.StatusBadRequest)
+	containerID := r.Header.Get(proxyheaders.ContainerID)
+	serviceName := r.Header.Get(proxyheaders.ServiceName)
+	if containerID == "" || serviceName == "" {
+		http.Error(w, "missing proxy routing metadata", http.StatusBadRequest)
 		return
 	}
-	resp, err := s.agent.proxyRequest(r.Context(), req)
+	proxy, err := s.agent.reverseProxyFor(containerID, serviceName)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		http.Error(w, fmt.Sprintf("encode proxy response: %v", err), http.StatusInternalServerError)
-		return
-	}
+	proxy.ServeHTTP(w, r)
 }
 
-func bearerOK(r *http.Request, token string) bool {
-	auth := r.Header.Get("Authorization")
-	return token != "" && len(auth) > 7 && auth[:7] == "Bearer " && auth[7:] == token
+func tokenOK(r *http.Request, token string) bool {
+	return token != "" && r.Header.Get(proxyheaders.Token) == token
 }
 
-func (a *Agent) proxyRequest(ctx context.Context, req api.ProxyRequest) (api.ProxyResponse, error) {
+func (a *Agent) reverseProxyFor(containerID, serviceName string) (*httputil.ReverseProxy, error) {
 	snapshot := a.latestSnapshot()
 	if snapshot.WorkerID == "" {
-		return api.ProxyResponse{}, errors.New("no active snapshot")
+		return nil, errors.New("no active snapshot")
 	}
-	svc, _, err := a.lookupService(snapshot, req.ContainerID, req.ServiceName)
+	svc, _, err := a.lookupService(snapshot, containerID, serviceName)
 	if err != nil {
-		return api.ProxyResponse{}, err
+		return nil, err
 	}
 	target, err := url.Parse(svc.BackendURL)
 	if err != nil {
-		return api.ProxyResponse{}, err
+		return nil, err
 	}
-	target.Path = req.Path
-	target.RawQuery = req.RawQuery
-	outReq, err := http.NewRequestWithContext(ctx, req.Method, target.String(), bytes.NewReader(req.Body))
-	if err != nil {
-		return api.ProxyResponse{}, err
-	}
-	for k, values := range req.Header {
-		if hopByHopHeader(k) {
-			continue
-		}
-		for _, v := range values {
-			outReq.Header.Add(k, v)
-		}
-	}
-	if svc.PassHostHeader != nil && *svc.PassHostHeader && req.Host != "" {
-		outReq.Host = req.Host
-	} else {
-		outReq.Host = target.Host
-	}
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(outReq)
-	if err != nil {
-		return api.ProxyResponse{}, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return api.ProxyResponse{}, err
-	}
-	return api.ProxyResponse{
-		StatusCode: resp.StatusCode,
-		Header:     cloneHeader(resp.Header),
-		Body:       body,
-	}, nil
-}
-
-func cloneHeader(h http.Header) http.Header {
-	out := make(http.Header, len(h))
-	for k, values := range h {
-		for _, v := range values {
-			out.Add(k, v)
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	originalDirector := proxy.Director
+	passHostHeader := svc.PassHostHeader != nil && *svc.PassHostHeader
+	proxy.Director = func(req *http.Request) {
+		originalHost := req.Host
+		originalDirector(req)
+		req.Header.Del(proxyheaders.Token)
+		req.Header.Del(proxyheaders.ContainerID)
+		req.Header.Del(proxyheaders.ServiceName)
+		if passHostHeader && originalHost != "" {
+			req.Host = originalHost
+		} else {
+			req.Host = target.Host
 		}
 	}
-	return out
-}
-
-func hopByHopHeader(key string) bool {
-	switch http.CanonicalHeaderKey(key) {
-	case "Connection", "Proxy-Connection", "Keep-Alive", "Transfer-Encoding", "Te", "Trailer", "Upgrade":
-		return true
-	default:
-		return false
+	proxy.Transport = http.DefaultTransport
+	proxy.FlushInterval = -1
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		http.Error(w, fmt.Sprintf("proxy backend failed: %v", err), http.StatusBadGateway)
 	}
+	return proxy, nil
 }
 
 func (a *Agent) latestSnapshot() model.Snapshot {

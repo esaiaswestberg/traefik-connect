@@ -27,21 +27,3 @@ type WorkerStatus struct {
 	ContainerCount    int       `json:"container_count"`
 	ManagedContainers []string  `json:"managed_containers,omitempty"`
 }
-
-type ProxyRequest struct {
-	ContainerID string              `json:"container_id"`
-	ServiceName string              `json:"service_name"`
-	Method      string              `json:"method"`
-	Path        string              `json:"path"`
-	RawQuery    string              `json:"raw_query,omitempty"`
-	Host        string              `json:"host,omitempty"`
-	Header      map[string][]string `json:"header,omitempty"`
-	Body        []byte              `json:"body,omitempty"`
-}
-
-type ProxyResponse struct {
-	StatusCode int                 `json:"status_code"`
-	Header     map[string][]string `json:"header,omitempty"`
-	Body       []byte              `json:"body,omitempty"`
-	Message    string              `json:"message,omitempty"`
-}

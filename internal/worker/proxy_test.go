@@ -1,8 +1,6 @@
 package worker
 
 import (
-	"bytes"
-	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -10,12 +8,14 @@ import (
 	"strings"
 	"testing"
 
-	"example.com/traefik-connect/internal/api"
 	"example.com/traefik-connect/internal/config"
 	"example.com/traefik-connect/internal/model"
+	"example.com/traefik-connect/internal/proxyheaders"
 )
 
-func TestProxyServerReturnsJSONEnvelope(t *testing.T) {
+var workerLargePayload = "0123456789abcdef" + "x" + strings.Repeat("a", 1<<20)
+
+func TestProxyServerStreamsRequestAndResponse(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.Path; got != "/hello" {
 			t.Fatalf("backend path = %q", got)
@@ -26,6 +26,15 @@ func TestProxyServerReturnsJSONEnvelope(t *testing.T) {
 		if got := r.Header.Get("X-Test"); got != "value" {
 			t.Fatalf("backend header = %q", got)
 		}
+		if got := r.Header.Get(proxyheaders.Token); got != "" {
+			t.Fatalf("backend saw internal token header = %q", got)
+		}
+		if got := r.Header.Get(proxyheaders.ContainerID); got != "" {
+			t.Fatalf("backend saw container id header = %q", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer client-token" {
+			t.Fatalf("backend authorization = %q", got)
+		}
 		if got := r.Host; got != "whoami.example.test" {
 			t.Fatalf("backend host = %q", got)
 		}
@@ -33,8 +42,11 @@ func TestProxyServerReturnsJSONEnvelope(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read backend body: %v", err)
 		}
-		if got := string(body); got != "payload" {
-			t.Fatalf("backend body = %q", got)
+		if got := len(body); got != len(workerLargePayload) {
+			t.Fatalf("backend body len = %d", got)
+		}
+		if got := string(body[:16]); got != workerLargePayload[:16] {
+			t.Fatalf("backend body prefix = %q", got)
 		}
 		w.Header().Set("X-Backend", "ok")
 		_, _ = w.Write([]byte("proxied"))
@@ -61,21 +73,13 @@ func TestProxyServerReturnsJSONEnvelope(t *testing.T) {
 	}
 	srv := NewProxyServer(agent, slog.Default())
 
-	reqBody, _ := json.Marshal(api.ProxyRequest{
-		ContainerID: "container-1",
-		ServiceName: "whoami-svc",
-		Method:      http.MethodPost,
-		Path:        "/hello",
-		RawQuery:    "a=1",
-		Host:        "whoami.example.test",
-		Header: map[string][]string{
-			"Authorization": {"Bearer secret"},
-			"X-Test":        {"value"},
-		},
-		Body: []byte("payload"),
-	})
-	req := httptest.NewRequest(http.MethodPost, "http://worker.local/v1/proxy", bytes.NewReader(reqBody))
-	req.Header.Set("Authorization", "Bearer secret")
+	req := httptest.NewRequest(http.MethodPost, "http://worker.local/hello?a=1", strings.NewReader(workerLargePayload))
+	req.Host = "whoami.example.test"
+	req.Header.Set("Authorization", "Bearer client-token")
+	req.Header.Set("X-Test", "value")
+	req.Header.Set(proxyheaders.Token, "secret")
+	req.Header.Set(proxyheaders.ContainerID, "container-1")
+	req.Header.Set(proxyheaders.ServiceName, "whoami-svc")
 	rec := httptest.NewRecorder()
 
 	srv.mux.ServeHTTP(rec, req)
@@ -83,21 +87,11 @@ func TestProxyServerReturnsJSONEnvelope(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
-		t.Fatalf("content-type = %q", got)
+	if got := rec.Header().Get("X-Backend"); got != "ok" {
+		t.Fatalf("response header X-Backend = %q", got)
 	}
-	var resp api.ProxyResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode proxy response: %v", err)
-	}
-	if got := resp.StatusCode; got != http.StatusOK {
-		t.Fatalf("status_code = %d", got)
-	}
-	if got := string(resp.Body); got != "proxied" {
+	if got := rec.Body.String(); got != "proxied" {
 		t.Fatalf("body = %q", got)
-	}
-	if got := resp.Header["X-Backend"]; len(got) != 1 || got[0] != "ok" {
-		t.Fatalf("response header = %#v", resp.Header["X-Backend"])
 	}
 }
 

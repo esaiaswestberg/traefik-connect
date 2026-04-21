@@ -1,7 +1,6 @@
 package stub
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,56 +10,46 @@ import (
 	"testing"
 
 	"example.com/traefik-connect/internal/config"
+	"example.com/traefik-connect/internal/proxyheaders"
 )
 
-func TestServerHandlesUnauthenticatedIngressAndAuthenticatesUpstream(t *testing.T) {
+var stubLargePayload = "0123456789abcdef" + "x" + strings.Repeat("a", 1<<20)
+
+func TestServerStreamsAndAuthenticatesUpstream(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("Authorization"); got != "Bearer secret-token" {
-			t.Fatalf("upstream authorization = %q", got)
+		if got := r.Header.Get(proxyheaders.Token); got != "secret-token" {
+			t.Fatalf("upstream token = %q", got)
 		}
-		if got := r.URL.Path; got != "/v1/proxy" {
+		if got := r.Header.Get(proxyheaders.ContainerID); got != "abc123" {
+			t.Fatalf("proxy container id = %q", got)
+		}
+		if got := r.Header.Get(proxyheaders.ServiceName); got != "whoami" {
+			t.Fatalf("proxy service name = %q", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer client-token" {
+			t.Fatalf("client authorization = %q", got)
+		}
+		if got := r.URL.Path; got != "/hello" {
 			t.Fatalf("upstream path = %q", got)
 		}
-		var proxyReq struct {
-			ContainerID string `json:"container_id"`
-			ServiceName string `json:"service_name"`
-			Method      string `json:"method"`
-			Path        string `json:"path"`
-			RawQuery    string `json:"raw_query"`
-			Host        string `json:"host"`
-			Body        []byte `json:"body"`
+		if got := r.URL.RawQuery; got != "a=1" {
+			t.Fatalf("upstream query = %q", got)
+		}
+		if got := r.Host; got != "whoami.example.test" {
+			t.Fatalf("upstream host = %q", got)
 		}
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Fatalf("read upstream body: %v", err)
 		}
-		if err := json.Unmarshal(body, &proxyReq); err != nil {
-			t.Fatalf("decode proxy request: %v", err)
+		if got := len(body); got != len(stubLargePayload) {
+			t.Fatalf("upstream body len = %d", got)
 		}
-		if got := proxyReq.ContainerID; got != "abc123" {
-			t.Fatalf("proxy container id = %q", got)
-		}
-		if got := proxyReq.ServiceName; got != "whoami" {
-			t.Fatalf("proxy service name = %q", got)
-		}
-		if got := proxyReq.Method; got != http.MethodPost {
-			t.Fatalf("proxy method = %q", got)
-		}
-		if got := proxyReq.Path; got != "/hello" {
-			t.Fatalf("proxy path = %q", got)
-		}
-		if got := proxyReq.RawQuery; got != "a=1" {
-			t.Fatalf("proxy query = %q", got)
-		}
-		if got := proxyReq.Host; got != "whoami.example.test" {
-			t.Fatalf("proxy host = %q", got)
-		}
-		if got := string(proxyReq.Body); got != "payload" {
-			t.Fatalf("proxy body = %q", got)
+		if got := string(body[:16]); got != stubLargePayload[:16] {
+			t.Fatalf("upstream body prefix = %q", got)
 		}
 		w.Header().Set("X-Upstream", "ok")
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status_code":200,"header":{"X-Upstream":["ok"]},"body":"cHJveGllZA=="}`))
+		_, _ = w.Write([]byte("proxied"))
 	}))
 	defer upstream.Close()
 
@@ -75,8 +64,9 @@ func TestServerHandlesUnauthenticatedIngressAndAuthenticatesUpstream(t *testing.
 		t.Fatalf("new server: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "http://stub.local/hello?a=1", strings.NewReader("payload"))
+	req := httptest.NewRequest(http.MethodPost, "http://stub.local/hello?a=1", strings.NewReader(stubLargePayload))
 	req.Host = "whoami.example.test"
+	req.Header.Set("Authorization", "Bearer client-token")
 	rec := httptest.NewRecorder()
 
 	srv.handle(rec, req)

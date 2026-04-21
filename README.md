@@ -6,7 +6,7 @@
 - one or more private workers that run application containers
 - no Swarm, Kubernetes, Consul, Nomad, or remote Docker access
 
-The worker agent discovers opted-in Docker containers locally. The master receiver turns those snapshots into master-local stub containers. Traefik on the master discovers those stubs through its Docker provider and sends traffic through them back to the worker proxy.
+The worker agent discovers opted-in Docker containers locally. The master receiver turns those snapshots into master-local stub containers. Traefik on the master discovers those stubs through its Docker provider and sends traffic through them back to the worker proxy. The proxy path streams request and response bodies directly, so large uploads, downloads, WebSockets, and long-lived HTTP connections are not wrapped in JSON.
 
 ## How it works
 
@@ -16,7 +16,7 @@ The worker agent discovers opted-in Docker containers locally. The master receiv
 3. The agent sends a signed snapshot to the master receiver.
 4. The receiver validates the snapshot and creates or updates a local stub container on the master.
 5. Traefik sees the stub container through the Docker provider and routes requests to it.
-6. The stub forwards the request to the worker proxy endpoint, which forwards to the real application container.
+6. The stub reverse-proxies the request to the worker proxy endpoint, which reverse-proxies it to the real application container.
 
 ## Backend resolution order
 
@@ -31,7 +31,7 @@ If resolution fails, the container is skipped and the reason is logged.
 ## Repository layout
 
 - `cmd/traefik-connect`: single binary with `agent`, `receiver`, and `stub` modes
-- `internal/worker`: worker sync loop, local proxy, and status endpoint
+- `internal/worker`: worker sync loop, streaming reverse proxy, and status endpoint
 - `internal/receiver`: master API, persistence, and stub reconciliation
 - `internal/parse`: Traefik label parsing and backend resolution
 - `internal/stub`: master-side HTTP stub that forwards to the worker proxy
@@ -89,7 +89,7 @@ docker compose -f docker-compose.worker.yml up --build
 What starts on the worker:
 
 - `agent` on host network port `8081` for status
-- `agent` on host network port `8090` for the local proxy
+- `agent` on host network port `8090` for the local streaming proxy
 - the master stub listens on `18181` inside the container
 - a `whoami` example container with Traefik labels
 
@@ -100,7 +100,6 @@ The agent exposes:
 - `GET /healthz`
 - `GET /readyz`
 - `GET /debug/state`
-- `POST /v1/proxy`
 
 ## Example labels
 
@@ -130,9 +129,9 @@ For `https://whoami.example.test`:
 
 1. Traefik matches the `whoami-https` router.
 2. Traefik connects to the master-local stub container.
-3. The stub calls the worker proxy on `http://<worker-lan-ip>:8090/v1/proxy`.
-4. The worker proxy sends the request to the real application container.
-5. The response comes back through the same path in reverse.
+3. The stub reverse-proxies the request to `http://<worker-lan-ip>:8090`.
+4. The worker proxy reverse-proxies the request to the real application container.
+5. The response streams back through the same path in reverse.
 
 ## Security notes
 
@@ -140,6 +139,7 @@ For `https://whoami.example.test`:
 - Prefer HTTPS between worker and receiver for anything beyond a lab.
 - The receiver rejects bad auth, invalid signatures, oversized bodies, and stale timestamps.
 - The worker proxy endpoint should be reachable only on the worker LAN or a private network.
+- The stub-to-worker hop uses a dedicated internal auth header, while the client request body and response body stream directly through both proxies.
 
 ## ACME notes
 
@@ -165,11 +165,12 @@ If you want real certificates:
 
 - `404 page not found` usually means Traefik did not match a router on `web` or `websecure`.
 - `unauthorized` from the browser usually means the master stub and worker proxy are not using the same shared token or the wrong code is running.
+- If large uploads or downloads stall, check the worker proxy listener and the master stub listener for timeout settings.
 - `client version 1.24 is too old` means Traefik is too old for the Docker daemon on the master and needs a newer image.
 - If curl returns `unexpected eof while reading`, check the host-to-container port mapping for Traefik.
 
 ## Limitations
 
-- HTTP only.
+- HTTP streaming only.
 - No Swarm, Kubernetes, Consul, Nomad, TCP, or UDP support.
 - No UI.
