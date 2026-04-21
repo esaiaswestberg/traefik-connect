@@ -163,22 +163,35 @@ func (s *ProxyServer) handleHTTPTunnel(ctx context.Context, stream *tunnel.Strea
 	}
 
 	br := bufio.NewReader(conn)
-	resp, err := http.ReadResponse(br, &http.Request{Method: start.Method})
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+	for {
+		resp, err := http.ReadResponse(br, &http.Request{Method: start.Method})
+		if err != nil {
+			return err
+		}
 
-	s.log.Info("tunnel phase", "phase", "response_start", "status", resp.StatusCode, "target", target, "container_id", container.ID, "service_name", service.Name)
-	if err := stream.WriteResponseStart(tunnel.ResponseStart{
-		Status: resp.StatusCode,
-		Header: sanitizeResponseHeaders(resp.Header),
-	}); err != nil {
-		return err
+		s.log.Info("tunnel phase", "phase", "response_start", "status", resp.StatusCode, "target", target, "container_id", container.ID, "service_name", service.Name)
+		if err := stream.WriteResponseStart(tunnel.ResponseStart{
+			Status: resp.StatusCode,
+			Header: sanitizeResponseHeaders(resp.Header),
+		}); err != nil {
+			resp.Body.Close()
+			return err
+		}
+
+		if resp.StatusCode >= 100 && resp.StatusCode < 200 {
+			// Continue reading until we get a final response.
+			resp.Body.Close()
+			continue
+		}
+
+		err = copyResponseToTunnel(stream, resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return err
+		}
+		break
 	}
-	if err := copyResponseToTunnel(stream, resp.Body); err != nil {
-		return err
-	}
+
 	s.log.Info("tunnel phase", "phase", "response_body", "target", target, "container_id", container.ID, "service_name", service.Name)
 	if err := stream.WriteClose(nil); err != nil {
 		return err

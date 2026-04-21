@@ -109,13 +109,28 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) error {
 		reqErrCh <- pumpBody(r.Body, stream)
 	}()
 
-	respStart, err := stream.ReadResponseStart()
-	if err != nil {
-		return err
-	}
-	s.log.Info("tunnel phase", "phase", "response_start", "status", respStart.Status, "path", r.URL.Path, "query", r.URL.RawQuery)
-	if respStart.Status == http.StatusSwitchingProtocols {
-		return s.handleUpgradedResponse(w, r, stream, respStart)
+	var respStart tunnel.ResponseStart
+	for {
+		var err error
+		respStart, err = stream.ReadResponseStart()
+		if err != nil {
+			return err
+		}
+		s.log.Info("tunnel phase", "phase", "response_start", "status", respStart.Status, "path", r.URL.Path, "query", r.URL.RawQuery)
+
+		if respStart.Status >= 100 && respStart.Status < 200 {
+			if respStart.Status == http.StatusSwitchingProtocols {
+				return s.handleUpgradedResponse(w, r, stream, respStart)
+			}
+			// Write 1xx response to client and continue reading.
+			copyHeaders(w.Header(), respStart.Header, false)
+			w.WriteHeader(respStart.Status)
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			continue
+		}
+		break
 	}
 
 	copyHeaders(w.Header(), respStart.Header, false)
