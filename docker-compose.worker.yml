@@ -1,0 +1,46 @@
+services:
+  agent:
+    build: .
+    command:
+      - agent
+      - --worker-id
+      - ${AGENT_WORKER_ID}
+      - --advertise-addr
+      - ${AGENT_ADVERTISE_ADDR}
+      - --docker-socket
+      - /var/run/docker.sock
+      - --master-url
+      - ${AGENT_MASTER_URL}
+      - --token
+      - ${AGENT_TOKEN}
+      - --status-listen
+      - :8081
+    environment:
+      AGENT_WORKER_ID: ${AGENT_WORKER_ID}
+      AGENT_ADVERTISE_ADDR: ${AGENT_ADVERTISE_ADDR}
+      AGENT_MASTER_URL: ${AGENT_MASTER_URL}
+      AGENT_TOKEN: ${AGENT_TOKEN}
+      AGENT_STATUS_LISTEN_ADDR: :8081
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8081:8081"
+    depends_on:
+      - whoami
+
+  whoami:
+    image: traefik/whoami:v1.10
+    ports:
+      - "18080:80"
+    labels:
+      traefik-sync.enable: "true"
+      traefik.http.routers.whoami.rule: Host(`whoami.example.test`)
+      traefik.http.routers.whoami.entrypoints: web
+      traefik.http.routers.whoami.tls: "true"
+      traefik.http.routers.whoami.tls.certresolver: letsencrypt
+      traefik.http.routers.whoami.middlewares: secure
+      traefik.http.routers.whoami.service: whoami-svc
+      traefik.http.services.whoami-svc.loadbalancer.server.port: "80"
+      traefik.http.services.whoami-svc.loadbalancer.passhostheader: "true"
+      traefik.http.middlewares.secure.redirectscheme.scheme: https
+      traefik.http.middlewares.secure.redirectscheme.permanent: "true"

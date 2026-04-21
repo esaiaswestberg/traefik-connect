@@ -1,0 +1,7 @@
+.git
+.codex
+state
+render
+bin
+tmp
+*.log

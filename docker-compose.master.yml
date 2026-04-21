@@ -1,0 +1,35 @@
+services:
+  receiver:
+    build: .
+    command:
+      - receiver
+      - --listen
+      - :8080
+      - --token
+      - ${RECEIVER_TOKEN}
+      - --state-dir
+      - /state
+      - --render-dir
+      - /render
+    environment:
+      RECEIVER_TOKEN: ${RECEIVER_TOKEN}
+      RECEIVER_STATE_DIR: /state
+      RECEIVER_RENDER_DIR: /render
+    volumes:
+      - ./state:/state
+      - ./render:/render
+    ports:
+      - "8080:8080"
+
+  traefik:
+    image: traefik:v3.1
+    command:
+      - --configFile=/etc/traefik/traefik.yml
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./examples/traefik-static.yml:/etc/traefik/traefik.yml:ro
+      - ./render:/etc/traefik/dynamic:ro
+    depends_on:
+      - receiver
