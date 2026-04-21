@@ -7,4 +7,4 @@ tmp/
 *.log
 coverage.out
 state/
-render/
+/render
