@@ -84,6 +84,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) error {
+	s.log.Info("tunnel phase", "phase", "dial", "method", r.Method, "path", r.URL.Path, "query", r.URL.RawQuery)
 	stream, err := tunnel.Dial(r.Context(), s.cfg.TargetURL, tunnelHeaders(s.cfg))
 	if err != nil {
 		return err
@@ -101,6 +102,7 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) error {
 	if err := stream.WriteRequestStart(start); err != nil {
 		return err
 	}
+	s.log.Info("tunnel phase", "phase", "request_start", "method", start.Method, "path", start.Path, "query", start.RawQuery)
 
 	reqErrCh := make(chan error, 1)
 	go func() {
@@ -111,6 +113,7 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	s.log.Info("tunnel phase", "phase", "response_start", "status", respStart.Status, "path", r.URL.Path, "query", r.URL.RawQuery)
 	if respStart.Status == http.StatusSwitchingProtocols {
 		return s.handleUpgradedResponse(w, r, stream, respStart)
 	}
@@ -125,6 +128,7 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) error {
 	if err := copyTunnelBodyToWriter(stream, w, flusher); err != nil {
 		return err
 	}
+	s.log.Info("tunnel phase", "phase", "response_body", "path", r.URL.Path, "query", r.URL.RawQuery)
 	return <-reqErrCh
 }
 
@@ -156,6 +160,7 @@ func (s *Server) handleUpgrade(w http.ResponseWriter, r *http.Request) error {
 	if err := stream.WriteRequestStart(start); err != nil {
 		return err
 	}
+	s.log.Info("tunnel phase", "phase", "request_start", "method", start.Method, "path", start.Path, "query", start.RawQuery)
 	if err := stream.WriteRequestEnd(); err != nil {
 		return err
 	}
@@ -164,6 +169,7 @@ func (s *Server) handleUpgrade(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	s.log.Info("tunnel phase", "phase", "response_start", "status", respStart.Status, "path", r.URL.Path, "query", r.URL.RawQuery)
 	if respStart.Status != http.StatusSwitchingProtocols {
 		if _, err := fmt.Fprintf(buf, "HTTP/1.1 %d %s\r\n", respStart.Status, http.StatusText(respStart.Status)); err != nil {
 			return err
@@ -188,6 +194,7 @@ func (s *Server) handleUpgrade(w http.ResponseWriter, r *http.Request) error {
 	if err := buf.Flush(); err != nil {
 		return err
 	}
+	s.log.Info("tunnel phase", "phase", "upgrade", "path", r.URL.Path, "query", r.URL.RawQuery)
 
 	return relayUpgrade(clientConn, stream)
 }
@@ -213,6 +220,7 @@ func (s *Server) handleUpgradedResponse(w http.ResponseWriter, r *http.Request, 
 	if err := buf.Flush(); err != nil {
 		return err
 	}
+	s.log.Info("tunnel phase", "phase", "response_start", "status", respStart.Status, "path", r.URL.Path, "query", r.URL.RawQuery)
 	return relayUpgrade(clientConn, stream)
 }
 

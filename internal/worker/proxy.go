@@ -106,6 +106,7 @@ func (s *ProxyServer) handleTunnel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing tunnel metadata", http.StatusBadRequest)
 		return
 	}
+	s.log.Info("tunnel phase", "phase", "accept", "container_id", containerID, "service_name", serviceName)
 
 	stream, err := tunnel.Accept(w, r)
 	if err != nil {
@@ -119,6 +120,7 @@ func (s *ProxyServer) handleTunnel(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn("failed to read tunnel request", "error", err)
 		return
 	}
+	s.log.Info("tunnel phase", "phase", "request_start", "method", start.Method, "path", start.Path, "query", start.RawQuery, "container_id", containerID, "service_name", serviceName)
 
 	container, service, ok := s.agent.lookupService(containerID, serviceName)
 	if !ok {
@@ -130,6 +132,7 @@ func (s *ProxyServer) handleTunnel(w http.ResponseWriter, r *http.Request) {
 		_ = stream.WriteClose(nil)
 		return
 	}
+	s.log.Info("tunnel phase", "phase", "lookup_service", "backend_url", service.BackendURL, "container_id", containerID, "service_name", serviceName)
 
 	if isWebSocketUpgrade(start.Header) {
 		if err := s.handleWebSocketTunnel(stream, start, container, service); err != nil {
@@ -148,6 +151,7 @@ func (s *ProxyServer) handleHTTPTunnel(ctx context.Context, stream *tunnel.Strea
 	if err != nil {
 		return err
 	}
+	s.log.Info("tunnel phase", "phase", "backend_request", "target", target, "container_id", container.ID, "service_name", service.Name)
 
 	var reqBody io.Reader
 	var bodyW *io.PipeWriter
@@ -187,6 +191,7 @@ func (s *ProxyServer) handleHTTPTunnel(ctx context.Context, stream *tunnel.Strea
 		}
 		return err
 	}
+	s.log.Info("tunnel phase", "phase", "response_start", "status", resp.StatusCode, "target", target, "container_id", container.ID, "service_name", service.Name)
 	defer resp.Body.Close()
 
 	if err := stream.WriteResponseStart(tunnel.ResponseStart{
@@ -204,6 +209,7 @@ func (s *ProxyServer) handleHTTPTunnel(ctx context.Context, stream *tunnel.Strea
 		}
 		return err
 	}
+	s.log.Info("tunnel phase", "phase", "response_body", "target", target, "container_id", container.ID, "service_name", service.Name)
 	if err := stream.WriteClose(nil); err != nil {
 		if bodyW != nil {
 			_ = bodyW.CloseWithError(err)
@@ -239,6 +245,7 @@ func (s *ProxyServer) handleWebSocketTunnel(stream *tunnel.Stream, start tunnel.
 	if err := writeHTTPRequest(conn, start, u, service.PassHostHeader != nil && *service.PassHostHeader, true); err != nil {
 		return err
 	}
+	s.log.Info("tunnel phase", "phase", "backend_request", "target", target, "container_id", container.ID, "service_name", service.Name)
 	br := bufio.NewReader(conn)
 	resp, err := http.ReadResponse(br, &http.Request{Method: start.Method})
 	if err != nil {
@@ -252,12 +259,14 @@ func (s *ProxyServer) handleWebSocketTunnel(stream *tunnel.Stream, start tunnel.
 	}); err != nil {
 		return err
 	}
+	s.log.Info("tunnel phase", "phase", "response_start", "status", resp.StatusCode, "target", target, "container_id", container.ID, "service_name", service.Name)
 	if resp.StatusCode != http.StatusSwitchingProtocols {
 		if err := copyResponseToTunnel(stream, resp.Body); err != nil {
 			return err
 		}
 		return stream.WriteClose(nil)
 	}
+	s.log.Info("tunnel phase", "phase", "upgrade", "target", target, "container_id", container.ID, "service_name", service.Name)
 
 	return relayTunnelAndConn(stream, conn, br)
 }
