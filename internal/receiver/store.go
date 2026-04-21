@@ -438,6 +438,9 @@ func buildDesiredStubs(snapshot model.Snapshot, dockerNetwork, stubImage, stubIm
 					if r.TLS.CertResolver != "" {
 						spec.Labels["traefik.tcp.routers."+routerName+".tls.certresolver"] = r.TLS.CertResolver
 					}
+					if r.Priority != nil {
+						spec.Labels["traefik.tcp.routers."+routerName+".priority"] = strconv.Itoa(*r.Priority)
+					}
 					spec.Labels["traefik.tcp.routers."+routerName+".service"] = serviceName
 					continue
 				}

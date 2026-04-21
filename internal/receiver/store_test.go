@@ -67,6 +67,42 @@ func TestBuildDesiredStubs(t *testing.T) {
 	}
 }
 
+func TestBuildDesiredStubsWithPriority(t *testing.T) {
+	priority := 50
+	snapshot := model.Snapshot{
+		WorkerID:      "worker-a",
+		AdvertiseAddr: "192.168.1.10",
+		ProxyPort:     8090,
+		CapturedAt:    time.Now().UTC(),
+		Version:       "v2",
+		Containers: []model.ContainerSpec{
+			{
+				ID:   "abcdef",
+				Name: "web",
+				Routers: map[string]model.RouterSpec{
+					"web":       {Rule: "Host(`web.test`)", Service: "svc", Priority: &priority},
+					"websecure": {Rule: "Host(`web.test`)", Service: "svc", TLS: &model.TLSSpec{}, Priority: &priority},
+				},
+				Services: map[string]model.ServiceSpec{
+					"svc": {BackendURL: "http://1.1.1.1:80"},
+				},
+			},
+		},
+	}
+
+	specs, _, _ := buildDesiredStubs(snapshot, "net", "img", "id", "token")
+	if len(specs) != 1 {
+		t.Fatalf("expected 1 spec, got %d", len(specs))
+	}
+	labels := specs[0].Labels
+	if got := labels["traefik.http.routers.web.priority"]; got != "50" {
+		t.Errorf("http priority = %q, want 50", got)
+	}
+	if got := labels["traefik.tcp.routers.websecure.priority"]; got != "50" {
+		t.Errorf("tcp priority = %q, want 50", got)
+	}
+}
+
 func TestValidateSnapshotRequiresProxyMetadata(t *testing.T) {
 	snapshot := model.Snapshot{
 		WorkerID:   "worker-a",
