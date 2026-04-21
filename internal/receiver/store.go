@@ -402,7 +402,7 @@ func buildDesiredStubs(snapshot model.Snapshot, dockerNetwork, stubImage, stubIm
 				ServiceName:   serviceName,
 				Labels:        map[string]string{},
 				Env: []string{
-					"STUB_TARGET_URL=" + fmt.Sprintf("http://%s:%d", snapshot.AdvertiseAddr, snapshot.ProxyPort),
+					"STUB_TARGET_URL=" + fmt.Sprintf("http://%s:%d/tunnel", snapshot.AdvertiseAddr, snapshot.ProxyPort),
 					"STUB_TOKEN=" + token,
 					"STUB_CONTAINER_ID=" + c.ID,
 					"STUB_SERVICE_NAME=" + serviceName,

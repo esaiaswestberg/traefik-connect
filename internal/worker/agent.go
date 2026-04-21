@@ -257,6 +257,34 @@ func (a *Agent) storeSnapshot(snapshot model.Snapshot) {
 	a.snapshot = snapshot
 }
 
+func (a *Agent) SetSnapshot(snapshot model.Snapshot) {
+	a.storeSnapshot(snapshot)
+}
+
+func (a *Agent) lookupService(containerID, serviceName string) (model.ContainerSpec, model.ServiceSpec, bool) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	if containerID != "" {
+		for _, c := range a.snapshot.Containers {
+			if c.ID != containerID {
+				continue
+			}
+			if svc, ok := c.Services[serviceName]; ok {
+				return c, svc, true
+			}
+		}
+	}
+	if serviceName != "" {
+		for _, c := range a.snapshot.Containers {
+			if svc, ok := c.Services[serviceName]; ok {
+				return c, svc, true
+			}
+		}
+	}
+	return model.ContainerSpec{}, model.ServiceSpec{}, false
+}
+
 func snapshotForHash(snapshot model.Snapshot) any {
 	cp := snapshot
 	cp.Hash = ""

@@ -1,21 +1,26 @@
 package worker
 
 import (
+	"bytes"
+	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"example.com/traefik-connect/internal/config"
 	"example.com/traefik-connect/internal/model"
 	"example.com/traefik-connect/internal/proxyheaders"
+	"example.com/traefik-connect/internal/tunnel"
 )
 
 var workerLargePayload = "0123456789abcdef" + "x" + strings.Repeat("a", 1<<20)
 
-func TestProxyServerStreamsRequestAndResponse(t *testing.T) {
+func TestProxyServerTunnelStreamsRequestAndResponse(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.Path; got != "/hello" {
 			t.Fatalf("backend path = %q", got)
@@ -71,28 +76,176 @@ func TestProxyServerStreamsRequestAndResponse(t *testing.T) {
 			},
 		},
 	}
-	srv := NewProxyServer(agent, slog.Default())
+	srv := httptest.NewServer(NewProxyServer(agent, slog.Default()))
+	defer srv.Close()
 
-	req := httptest.NewRequest(http.MethodPost, "http://worker.local/hello?a=1", strings.NewReader(workerLargePayload))
-	req.Host = "whoami.example.test"
-	req.Header.Set("Authorization", "Bearer client-token")
-	req.Header.Set("X-Test", "value")
-	req.Header.Set(proxyheaders.Token, "secret")
-	req.Header.Set(proxyheaders.ContainerID, "container-1")
-	req.Header.Set(proxyheaders.ServiceName, "whoami-svc")
-	rec := httptest.NewRecorder()
-
-	srv.mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	stream, err := tunnel.Dial(context.Background(), srv.URL+"/tunnel", http.Header{
+		proxyheaders.Token:       []string{"secret"},
+		proxyheaders.ContainerID: []string{"container-1"},
+		proxyheaders.ServiceName: []string{"whoami-svc"},
+	})
+	if err != nil {
+		t.Fatalf("dial tunnel: %v", err)
 	}
-	if got := rec.Header().Get("X-Backend"); got != "ok" {
+	defer stream.Close()
+
+	reqStart := tunnel.RequestStart{
+		Method:        http.MethodPost,
+		Path:          "/hello",
+		RawQuery:      "a=1",
+		Host:          "whoami.example.test",
+		Header:        http.Header{"Authorization": []string{"Bearer client-token"}, "X-Test": []string{"value"}},
+		ContentLength: int64(len(workerLargePayload)),
+	}
+	if err := stream.WriteRequestStart(reqStart); err != nil {
+		t.Fatalf("write request start: %v", err)
+	}
+	if err := stream.WriteBinary([]byte(workerLargePayload[:512*1024])); err != nil {
+		t.Fatalf("write body chunk 1: %v", err)
+	}
+	if err := stream.WriteBinary([]byte(workerLargePayload[512*1024:])); err != nil {
+		t.Fatalf("write body chunk 2: %v", err)
+	}
+	if err := stream.WriteRequestEnd(); err != nil {
+		t.Fatalf("write request end: %v", err)
+	}
+
+	respStart, err := stream.ReadResponseStart()
+	if err != nil {
+		t.Fatalf("read response start: %v", err)
+	}
+	if respStart.Status != http.StatusOK {
+		t.Fatalf("status = %d", respStart.Status)
+	}
+	if got := respStart.Header.Get("X-Backend"); got != "ok" {
 		t.Fatalf("response header X-Backend = %q", got)
 	}
-	if got := rec.Body.String(); got != "proxied" {
+
+	var body bytes.Buffer
+	for {
+		opcode, payload, err := stream.ReadMessage()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			t.Fatalf("read response frame: %v", err)
+		}
+		if opcode == 0x8 {
+			break
+		}
+		if opcode == 0x2 && len(payload) > 0 {
+			_, _ = body.Write(payload)
+		}
+	}
+	if got := body.String(); got != "proxied" {
 		t.Fatalf("body = %q", got)
 	}
 }
 
+func TestProxyServerVersionAndHealth(t *testing.T) {
+	agent := &Agent{cfg: config.AgentConfig{Token: "secret"}}
+	srv := httptest.NewServer(NewProxyServer(agent, slog.Default()))
+	defer srv.Close()
+
+	for _, path := range []string{"/healthz", "/readyz", "/version"} {
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatalf("get %s: %v", path, err)
+		}
+		_, _ = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s status = %d", path, resp.StatusCode)
+		}
+	}
+}
+
 func boolPtr(v bool) *bool { return &v }
+
+func TestProxyServerHandlesLongPollingStyleStream(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("no flusher")
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = fmt.Fprintln(w, "waiting")
+		flusher.Flush()
+		time.Sleep(20 * time.Millisecond)
+		_, _ = fmt.Fprintln(w, "done")
+	}))
+	defer backend.Close()
+
+	agent := &Agent{
+		cfg: config.AgentConfig{Token: "secret"},
+		snapshot: model.Snapshot{
+			WorkerID: "worker-a",
+			Containers: []model.ContainerSpec{
+				{
+					ID: "container-1",
+					Services: map[string]model.ServiceSpec{
+						"whoami-svc": {BackendURL: backend.URL},
+					},
+				},
+			},
+		},
+	}
+	srv := httptest.NewServer(NewProxyServer(agent, slog.Default()))
+	defer srv.Close()
+
+	stream, err := tunnel.Dial(context.Background(), srv.URL+"/tunnel", http.Header{
+		proxyheaders.Token:       []string{"secret"},
+		proxyheaders.ContainerID: []string{"container-1"},
+		proxyheaders.ServiceName: []string{"whoami-svc"},
+	})
+	if err != nil {
+		t.Fatalf("dial tunnel: %v", err)
+	}
+	defer stream.Close()
+
+	if err := stream.WriteRequestStart(tunnel.RequestStart{
+		Method: http.MethodGet,
+		Path:   "/wait",
+		Host:   "stream.example.test",
+		Header: http.Header{},
+	}); err != nil {
+		t.Fatalf("write request start: %v", err)
+	}
+	if err := stream.WriteRequestEnd(); err != nil {
+		t.Fatalf("write request end: %v", err)
+	}
+
+	respStart, err := stream.ReadResponseStart()
+	if err != nil {
+		t.Fatalf("read response start: %v", err)
+	}
+	if respStart.Status != http.StatusOK {
+		t.Fatalf("status = %d", respStart.Status)
+	}
+
+	var body strings.Builder
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for streaming body")
+		default:
+		}
+		opcode, payload, err := stream.ReadMessage()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			t.Fatalf("read frame: %v", err)
+		}
+		if opcode == 0x8 {
+			break
+		}
+		if opcode == 0x2 {
+			body.Write(payload)
+		}
+	}
+	if got := body.String(); !strings.Contains(got, "waiting") || !strings.Contains(got, "done") {
+		t.Fatalf("body = %q", got)
+	}
+}

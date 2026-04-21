@@ -52,7 +52,7 @@ func TestBuildDesiredStubs(t *testing.T) {
 	if got := spec.Labels["traefik.http.services.websvc.loadbalancer.server.port"]; got != "18181" {
 		t.Fatalf("service port = %q", got)
 	}
-	if got := spec.Env[0]; got != "STUB_TARGET_URL=http://192.168.1.10:8090" {
+	if got := spec.Env[0]; got != "STUB_TARGET_URL=http://192.168.1.10:8090/tunnel" {
 		t.Fatalf("stub target = %q", got)
 	}
 }

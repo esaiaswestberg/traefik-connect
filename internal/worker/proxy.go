@@ -1,32 +1,57 @@
 package worker
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
+	"strings"
 	"time"
 
-	"example.com/traefik-connect/internal/proxyheaders"
 	"example.com/traefik-connect/internal/model"
+	"example.com/traefik-connect/internal/proxyheaders"
 	"example.com/traefik-connect/internal/runtimeinfo"
+	"example.com/traefik-connect/internal/tunnel"
 )
 
 type ProxyServer struct {
-	agent *Agent
-	log   *slog.Logger
-	mux   *http.ServeMux
+	agent  *Agent
+	log    *slog.Logger
+	mux    *http.ServeMux
+	client *http.Client
 }
 
+func (s *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.mux.ServeHTTP(w, r)
+}
+
+func (s *ProxyServer) Handler() http.Handler { return s.mux }
+
 func NewProxyServer(agent *Agent, log *slog.Logger) *ProxyServer {
+	transport := &http.Transport{
+		Proxy:                 nil,
+		DisableCompression:    true,
+		ResponseHeaderTimeout: 0,
+		ExpectContinueTimeout: 0,
+		IdleConnTimeout:       0,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   100,
+		MaxConnsPerHost:       0,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+	}
 	ps := &ProxyServer{
-		agent: agent,
-		log:   log,
-		mux:   http.NewServeMux(),
+		agent:  agent,
+		log:    log,
+		mux:    http.NewServeMux(),
+		client: &http.Client{Transport: transport},
 	}
 	ps.mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -38,9 +63,9 @@ func NewProxyServer(agent *Agent, log *slog.Logger) *ProxyServer {
 	})
 	ps.mux.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(runtimeinfo.Current("proxy"))
+		_ = json.NewEncoder(w).Encode(runtimeinfo.Current("agent-proxy"))
 	})
-	ps.mux.HandleFunc("/", ps.handleProxy)
+	ps.mux.HandleFunc("/tunnel", ps.handleTunnel)
 	return ps
 }
 
@@ -66,84 +91,362 @@ func (s *ProxyServer) Listen(ctx context.Context, addr string) error {
 	}
 }
 
-func (s *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
+func (s *ProxyServer) handleTunnel(w http.ResponseWriter, r *http.Request) {
+	if !isWebSocketUpgrade(r.Header) {
+		http.Error(w, "upgrade required", http.StatusUpgradeRequired)
 		return
 	}
-	if !tokenOK(r, s.agent.cfg.Token) {
+	if token := r.Header.Get(proxyheaders.Token); token != s.agent.cfg.Token {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	containerID := r.Header.Get(proxyheaders.ContainerID)
 	serviceName := r.Header.Get(proxyheaders.ServiceName)
 	if containerID == "" || serviceName == "" {
-		http.Error(w, "missing proxy routing metadata", http.StatusBadRequest)
+		http.Error(w, "missing tunnel metadata", http.StatusBadRequest)
 		return
 	}
-	proxy, err := s.agent.reverseProxyFor(containerID, serviceName)
+
+	stream, err := tunnel.Accept(w, r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		s.log.Warn("failed to accept tunnel", "error", err)
 		return
 	}
-	proxy.ServeHTTP(w, r)
+	defer stream.Close()
+
+	start, err := stream.ReadRequestStart()
+	if err != nil {
+		s.log.Warn("failed to read tunnel request", "error", err)
+		return
+	}
+
+	container, service, ok := s.agent.lookupService(containerID, serviceName)
+	if !ok {
+		_ = stream.WriteResponseStart(tunnel.ResponseStart{
+			Status: http.StatusNotFound,
+			Header: http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}},
+		})
+		_ = stream.WriteBinary([]byte("service not found\n"))
+		_ = stream.WriteClose(nil)
+		return
+	}
+
+	if isWebSocketUpgrade(start.Header) {
+		if err := s.handleWebSocketTunnel(stream, start, container, service); err != nil {
+			s.log.Warn("websocket tunnel failed", "container_id", containerID, "service_name", serviceName, "error", err)
+		}
+		return
+	}
+
+	if err := s.handleHTTPTunnel(r.Context(), stream, start, container, service); err != nil {
+		s.log.Warn("http tunnel failed", "container_id", containerID, "service_name", serviceName, "error", err)
+	}
 }
 
-func tokenOK(r *http.Request, token string) bool {
-	return token != "" && r.Header.Get(proxyheaders.Token) == token
-}
+func (s *ProxyServer) handleHTTPTunnel(ctx context.Context, stream *tunnel.Stream, start tunnel.RequestStart, container model.ContainerSpec, service model.ServiceSpec) error {
+	target, err := serviceURL(service.BackendURL, start.Path, start.RawQuery)
+	if err != nil {
+		return err
+	}
 
-func (a *Agent) reverseProxyFor(containerID, serviceName string) (*httputil.ReverseProxy, error) {
-	snapshot := a.latestSnapshot()
-	if snapshot.WorkerID == "" {
-		return nil, errors.New("no active snapshot")
+	var reqBody io.Reader
+	var bodyW *io.PipeWriter
+	bodyDone := make(chan error, 1)
+	if start.ContentLength != 0 {
+		bodyR, pw := io.Pipe()
+		reqBody = bodyR
+		bodyW = pw
+		go func() {
+			bodyDone <- pumpTunnelRequestBody(stream, bodyW)
+		}()
 	}
-	svc, _, err := a.lookupService(snapshot, containerID, serviceName)
+
+	req, err := http.NewRequestWithContext(ctx, start.Method, target, reqBody)
 	if err != nil {
-		return nil, err
+		if bodyW != nil {
+			_ = bodyW.CloseWithError(err)
+		}
+		return err
 	}
-	target, err := url.Parse(svc.BackendURL)
-	if err != nil {
-		return nil, err
-	}
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	originalDirector := proxy.Director
-	passHostHeader := svc.PassHostHeader != nil && *svc.PassHostHeader
-	proxy.Director = func(req *http.Request) {
-		originalHost := req.Host
-		originalDirector(req)
-		req.Header.Del(proxyheaders.Token)
-		req.Header.Del(proxyheaders.ContainerID)
-		req.Header.Del(proxyheaders.ServiceName)
-		if passHostHeader && originalHost != "" {
-			req.Host = originalHost
+	req.Header = sanitizeHeaders(start.Header)
+	req.ContentLength = start.ContentLength
+	if service.PassHostHeader != nil && *service.PassHostHeader {
+		req.Host = start.Host
+	} else {
+		if u, parseErr := url.Parse(service.BackendURL); parseErr == nil {
+			req.Host = u.Host
 		} else {
-			req.Host = target.Host
+			req.Host = start.Host
 		}
 	}
-	proxy.Transport = http.DefaultTransport
-	proxy.FlushInterval = -1
-	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		http.Error(w, fmt.Sprintf("proxy backend failed: %v", err), http.StatusBadGateway)
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		if bodyW != nil {
+			_ = bodyW.CloseWithError(err)
+		}
+		return err
 	}
-	return proxy, nil
+	defer resp.Body.Close()
+
+	if err := stream.WriteResponseStart(tunnel.ResponseStart{
+		Status: resp.StatusCode,
+		Header: sanitizeResponseHeaders(resp.Header),
+	}); err != nil {
+		if bodyW != nil {
+			_ = bodyW.CloseWithError(err)
+		}
+		return err
+	}
+	if err := copyResponseToTunnel(stream, resp.Body); err != nil {
+		if bodyW != nil {
+			_ = bodyW.CloseWithError(err)
+		}
+		return err
+	}
+	if err := stream.WriteClose(nil); err != nil {
+		if bodyW != nil {
+			_ = bodyW.CloseWithError(err)
+		}
+		return err
+	}
+	if bodyW != nil {
+		_ = bodyW.Close()
+		return <-bodyDone
+	}
+	return nil
 }
 
-func (a *Agent) latestSnapshot() model.Snapshot {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.snapshot
+func (s *ProxyServer) handleWebSocketTunnel(stream *tunnel.Stream, start tunnel.RequestStart, container model.ContainerSpec, service model.ServiceSpec) error {
+	target, err := serviceURL(service.BackendURL, start.Path, start.RawQuery)
+	if err != nil {
+		return err
+	}
+	u, err := url.Parse(target)
+	if err != nil {
+		return err
+	}
+	host := u.Host
+	if host == "" {
+		return fmt.Errorf("backend url missing host")
+	}
+	conn, err := net.DialTimeout("tcp", host, 30*time.Second)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	if err := writeHTTPRequest(conn, start, u, service.PassHostHeader != nil && *service.PassHostHeader, true); err != nil {
+		return err
+	}
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, &http.Request{Method: start.Method})
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if err := stream.WriteResponseStart(tunnel.ResponseStart{
+		Status: resp.StatusCode,
+		Header: sanitizeResponseHeaders(resp.Header),
+	}); err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		if err := copyResponseToTunnel(stream, resp.Body); err != nil {
+			return err
+		}
+		return stream.WriteClose(nil)
+	}
+
+	return relayTunnelAndConn(stream, conn, br)
 }
 
-func (a *Agent) lookupService(snapshot model.Snapshot, containerID, serviceName string) (model.ServiceSpec, model.ContainerSpec, error) {
-	for _, c := range snapshot.Containers {
-		if c.ID != containerID {
+func relayTunnelAndConn(stream *tunnel.Stream, conn net.Conn, br *bufio.Reader) error {
+	errCh := make(chan error, 2)
+	go func() {
+		for {
+			op, payload, err := stream.ReadMessage()
+			if err != nil {
+				errCh <- err
+				return
+			}
+			switch op {
+			case 0x2:
+				if len(payload) == 0 {
+					continue
+				}
+				if _, err := conn.Write(payload); err != nil {
+					errCh <- err
+					return
+				}
+			case 0x8:
+				errCh <- io.EOF
+				return
+			}
+		}
+	}()
+	go func() {
+		buf := make([]byte, 32*1024)
+		for {
+			var (
+				n   int
+				err error
+			)
+			if br != nil {
+				n, err = br.Read(buf)
+			} else {
+				n, err = conn.Read(buf)
+			}
+			if n > 0 {
+				if err := stream.WriteBinary(buf[:n]); err != nil {
+					errCh <- err
+					return
+				}
+			}
+			if err != nil {
+				errCh <- err
+				return
+			}
+		}
+	}()
+	return <-errCh
+}
+
+func pumpTunnelRequestBody(stream *tunnel.Stream, w *io.PipeWriter) error {
+	defer w.Close()
+	for {
+		op, payload, err := stream.ReadMessage()
+		if err != nil {
+			return w.CloseWithError(err)
+		}
+		switch op {
+		case 0x2:
+			if len(payload) == 0 {
+				continue
+			}
+			if _, err := w.Write(payload); err != nil {
+				return w.CloseWithError(err)
+			}
+		case 0x8:
+			return nil
+		default:
 			continue
 		}
-		svc, ok := c.Services[serviceName]
-		if !ok {
-			return model.ServiceSpec{}, model.ContainerSpec{}, fmt.Errorf("unknown service %q", serviceName)
-		}
-		return svc, c, nil
 	}
-	return model.ServiceSpec{}, model.ContainerSpec{}, fmt.Errorf("unknown container %q", containerID)
+}
+
+func copyResponseToTunnel(stream *tunnel.Stream, body io.Reader) error {
+	buf := make([]byte, 32*1024)
+	for {
+		n, err := body.Read(buf)
+		if n > 0 {
+			if err := stream.WriteBinary(buf[:n]); err != nil {
+				return err
+			}
+		}
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func serviceURL(base, path, rawQuery string) (string, error) {
+	u, err := url.Parse(base)
+	if err != nil {
+		return "", err
+	}
+	u.Path = joinPath(u.Path, path)
+	u.RawQuery = rawQuery
+	return u.String(), nil
+}
+
+func joinPath(prefix, suffix string) string {
+	if prefix == "" {
+		prefix = "/"
+	}
+	if suffix == "" {
+		return prefix
+	}
+	if strings.HasSuffix(prefix, "/") {
+		prefix = strings.TrimSuffix(prefix, "/")
+	}
+	if !strings.HasPrefix(suffix, "/") {
+		suffix = "/" + suffix
+	}
+	return prefix + suffix
+}
+
+func sanitizeHeaders(in http.Header) http.Header {
+	out := make(http.Header, len(in))
+	for k, vals := range in {
+		if isHopByHopHeader(k) {
+			continue
+		}
+		for _, v := range vals {
+			out.Add(k, v)
+		}
+	}
+	return out
+}
+
+func sanitizeResponseHeaders(in http.Header) http.Header {
+	out := make(http.Header, len(in))
+	for k, vals := range in {
+		if isHopByHopHeader(k) {
+			continue
+		}
+		for _, v := range vals {
+			out.Add(k, v)
+		}
+	}
+	return out
+}
+
+func isHopByHopHeader(key string) bool {
+	switch strings.ToLower(key) {
+	case "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade":
+		return true
+	default:
+		return false
+	}
+}
+
+func isWebSocketUpgrade(h http.Header) bool {
+	return strings.Contains(strings.ToLower(h.Get("Connection")), "upgrade") &&
+		strings.EqualFold(h.Get("Upgrade"), "websocket")
+}
+
+func writeHTTPRequest(conn net.Conn, start tunnel.RequestStart, backendURL *url.URL, passHostHeader bool, upgrade bool) error {
+	path := start.Path
+	if path == "" {
+		path = "/"
+	}
+	if start.RawQuery != "" {
+		path += "?" + start.RawQuery
+	}
+	host := backendURL.Host
+	if passHostHeader && start.Host != "" {
+		host = start.Host
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s %s HTTP/1.1\r\n", start.Method, path)
+	fmt.Fprintf(&b, "Host: %s\r\n", host)
+	for k, vals := range start.Header {
+		if isHopByHopHeader(k) && !upgrade {
+			continue
+		}
+		for _, v := range vals {
+			fmt.Fprintf(&b, "%s: %s\r\n", k, v)
+		}
+	}
+	if start.ContentLength > 0 {
+		fmt.Fprintf(&b, "Content-Length: %d\r\n", start.ContentLength)
+	}
+	b.WriteString("\r\n")
+	_, err := conn.Write([]byte(b.String()))
+	return err
 }
