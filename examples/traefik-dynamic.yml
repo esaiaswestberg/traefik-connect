@@ -1,0 +1,11 @@
+# Dynamic Traefik configuration for the master node.
+#
+# The app routes use TCP routers so Traefik terminates TLS and forwards raw
+# bytes to the master stubs. Keep ALPN on HTTP/1.1 so clients do not negotiate
+# h2 for those routes.
+
+tls:
+  options:
+    default:
+      alpnProtocols:
+        - http/1.1

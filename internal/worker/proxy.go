@@ -217,7 +217,6 @@ func (s *ProxyServer) handleWebSocketTunnel(stream *tunnel.Stream, start tunnel.
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
 
 	if err := stream.WriteResponseStart(tunnel.ResponseStart{
 		Status: resp.StatusCode,
@@ -227,6 +226,7 @@ func (s *ProxyServer) handleWebSocketTunnel(stream *tunnel.Stream, start tunnel.
 	}
 	s.log.Info("tunnel phase", "phase", "response_start", "status", resp.StatusCode, "target", target, "container_id", container.ID, "service_name", service.Name)
 	if resp.StatusCode != http.StatusSwitchingProtocols {
+		defer resp.Body.Close()
 		if err := copyResponseToTunnel(stream, resp.Body); err != nil {
 			return err
 		}

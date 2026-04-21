@@ -50,6 +50,8 @@ services:
     volumes:
       # Static Traefik config, including entry points and the Docker provider.
       - ./examples/traefik-static.yml:/etc/traefik/traefik.yml:ro
+      # Dynamic Traefik config for service-level transport knobs.
+      - ./examples/traefik-dynamic.yml:/etc/traefik/dynamic.yml:ro
       # ACME storage for Let’s Encrypt certificates.
       - ./acme:/etc/traefik/acme
       # Read-only Docker socket so Traefik can discover master-local stub containers.

@@ -52,6 +52,10 @@ providers:
     exposedByDefault: false
     # Keep Traefik on the shared master network so it can reach the stubs.
     network: traefik-connect
+  file:
+    # Dynamic settings that need to be attached to services, such as the master-stub transport.
+    filename: /etc/traefik/dynamic.yml
+    watch: true
 
 api:
   # Dashboard is useful during local testing and troubleshooting.

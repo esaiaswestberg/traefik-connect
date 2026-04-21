@@ -6,7 +6,7 @@
 - one or more private workers that run application containers
 - no Swarm, Kubernetes, Consul, Nomad, or remote Docker access
 
-The worker agent discovers opted-in Docker containers locally. The master receiver turns those snapshots into master-local stub containers. Traefik on the master discovers those stubs through its Docker provider and sends traffic through them back to the worker proxy. The proxy path streams request and response bodies directly, so large uploads, downloads, WebSockets, and long-lived HTTP connections are not wrapped in JSON.
+The worker agent discovers opted-in Docker containers locally. The master receiver turns those snapshots into master-local stub containers. Traefik on the master discovers those stubs through its Docker provider and sends secure app traffic to them over TCP, which keeps the outer edge out of the HTTP parsing path for streaming requests, uploads, downloads, and WebSockets. The stub then forwards the request to the worker proxy, which streams request and response bodies directly without JSON wrapping.
 
 Every process exposes a small runtime marker so you can confirm which binary is actually serving traffic:
 
@@ -23,7 +23,7 @@ Every process exposes a small runtime marker so you can confirm which binary is 
 2. The worker agent reads the local Docker socket, parses Traefik labels, and resolves a backend URL the worker can actually reach.
 3. The agent sends a signed snapshot to the master receiver.
 4. The receiver validates the snapshot and creates or updates a local stub container on the master.
-5. Traefik sees the stub container through the Docker provider and routes requests to it.
+5. Traefik sees the stub container through the Docker provider and routes secure app traffic to it over a TCP router.
 6. The stub reverse-proxies the request to the worker proxy endpoint, which reverse-proxies it to the real application container.
 
 ## Backend resolution order

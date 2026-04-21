@@ -77,3 +77,20 @@ func TestBuildContainerRejectsMissingReachableAddress(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestBuildContainerRejectsManagedContainers(t *testing.T) {
+	ins := dockerx.ContainerInspect{}
+	ins.ID = "abcdef1234567890"
+	ins.Name = "/tc-web"
+	ins.Config.Labels = map[string]string{
+		"traefik-connect.managed":                               "true",
+		"traefik.enable":                                        "true",
+		"traefik.http.routers.web.rule":                         "Host(`web.example.test`)",
+		"traefik.http.routers.web.service":                      "websvc",
+		"traefik.http.services.websvc.loadbalancer.server.port": "18181",
+	}
+	_, _, err := BuildContainer(ins, "worker-a", "192.168.1.10")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}

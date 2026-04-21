@@ -20,7 +20,8 @@ func TestBuildDesiredStubs(t *testing.T) {
 				ID:   "abcdef1234567890",
 				Name: "web",
 				Routers: map[string]model.RouterSpec{
-					"web": {Rule: "Host(`web.example.test`)", Service: "websvc", Middlewares: []string{"secure"}},
+					"web":       {Rule: "Host(`web.example.test`)", Service: "websvc", Middlewares: []string{"secure"}},
+					"websecure": {Rule: "Host(`web.example.test`)", Service: "websvc", TLS: &model.TLSSpec{CertResolver: "letsencrypt"}},
 				},
 				Services: map[string]model.ServiceSpec{
 					"websvc": {BackendURL: "http://172.18.0.5:18181", PassHostHeader: boolPtr(true)},
@@ -51,6 +52,15 @@ func TestBuildDesiredStubs(t *testing.T) {
 	}
 	if got := spec.Labels["traefik.http.services.websvc.loadbalancer.server.port"]; got != "18181" {
 		t.Fatalf("service port = %q", got)
+	}
+	if got := spec.Labels["traefik.tcp.services.websvc.loadbalancer.server.port"]; got != "18181" {
+		t.Fatalf("tcp service port = %q", got)
+	}
+	if got := spec.Labels["traefik.tcp.routers.websecure.rule"]; got != "HostSNI(`web.example.test`)" {
+		t.Fatalf("tcp router rule = %q", got)
+	}
+	if got := spec.Labels["traefik.tcp.routers.websecure.tls.certresolver"]; got != "letsencrypt" {
+		t.Fatalf("tcp cert resolver = %q", got)
 	}
 	if got := spec.Env[0]; got != "STUB_TARGET_URL=http://192.168.1.10:8090/tunnel" {
 		t.Fatalf("stub target = %q", got)

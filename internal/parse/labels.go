@@ -19,6 +19,7 @@ const (
 	LabelBackendHost   = "traefik-connect.backend.host"
 	LabelBackendPort   = "traefik-connect.backend.port"
 	LabelBackendScheme = "traefik-connect.backend.scheme"
+	labelManaged       = "traefik-connect.managed"
 )
 
 type OptInDecision struct {
@@ -48,6 +49,9 @@ func BuildContainer(ins dockerx.ContainerInspect, workerID, advertiseAddr string
 	labels := map[string]string{}
 	for k, v := range ins.Config.Labels {
 		labels[k] = v
+	}
+	if parseBool(labels[labelManaged], false) {
+		return model.ContainerSpec{}, nil, fmt.Errorf("not exported: managed container")
 	}
 	decision := IsEnabled(labels)
 	if !decision.Enabled {

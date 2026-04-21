@@ -420,6 +420,7 @@ func buildDesiredStubs(snapshot model.Snapshot, dockerNetwork, stubImage, stubIm
 				spec.Labels["traefik.docker.network"] = dockerNetwork
 			}
 			spec.Labels["traefik.http.services."+serviceName+".loadbalancer.server.port"] = "18181"
+			spec.Labels["traefik.tcp.services."+serviceName+".loadbalancer.server.port"] = "18181"
 			if svc.PassHostHeader != nil {
 				spec.Labels["traefik.http.services."+serviceName+".loadbalancer.passhostheader"] = strconv.FormatBool(*svc.PassHostHeader)
 			}
@@ -428,15 +429,21 @@ func buildDesiredStubs(snapshot model.Snapshot, dockerNetwork, stubImage, stubIm
 			}
 			for _, routerName := range routerNamesByService[serviceName] {
 				r := c.Routers[routerName]
+				if r.TLS != nil {
+					spec.Labels["traefik.tcp.routers."+routerName+".rule"] = tcpRuleFromHTTPRule(r.Rule)
+					if len(r.EntryPoints) > 0 {
+						spec.Labels["traefik.tcp.routers."+routerName+".entrypoints"] = strings.Join(r.EntryPoints, ",")
+					}
+					spec.Labels["traefik.tcp.routers."+routerName+".tls"] = "true"
+					if r.TLS.CertResolver != "" {
+						spec.Labels["traefik.tcp.routers."+routerName+".tls.certresolver"] = r.TLS.CertResolver
+					}
+					spec.Labels["traefik.tcp.routers."+routerName+".service"] = serviceName
+					continue
+				}
 				spec.Labels["traefik.http.routers."+routerName+".rule"] = r.Rule
 				if len(r.EntryPoints) > 0 {
 					spec.Labels["traefik.http.routers."+routerName+".entrypoints"] = strings.Join(r.EntryPoints, ",")
-				}
-				if r.TLS != nil {
-					spec.Labels["traefik.http.routers."+routerName+".tls"] = "true"
-					if r.TLS.CertResolver != "" {
-						spec.Labels["traefik.http.routers."+routerName+".tls.certresolver"] = r.TLS.CertResolver
-					}
 				}
 				if len(r.Middlewares) > 0 {
 					spec.Labels["traefik.http.routers."+routerName+".middlewares"] = strings.Join(r.Middlewares, ",")
@@ -541,6 +548,14 @@ func middlewareLabels(name string, mw model.MiddlewareSpec) map[string]string {
 		out["traefik.http.middlewares."+name+".stripprefix.prefixes"] = strings.Join(mw.StripPrefixPrefixes, ",")
 	}
 	return out
+}
+
+func tcpRuleFromHTTPRule(rule string) string {
+	rule = strings.TrimSpace(rule)
+	if strings.HasPrefix(rule, "Host(") {
+		return "HostSNI(" + strings.TrimPrefix(rule, "Host(")
+	}
+	return rule
 }
 
 func sortedRouterNames(m map[string]model.RouterSpec) []string {

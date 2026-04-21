@@ -3,6 +3,8 @@ package worker
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,6 +18,7 @@ import (
 	"example.com/traefik-connect/internal/model"
 	"example.com/traefik-connect/internal/proxyheaders"
 	"example.com/traefik-connect/internal/tunnel"
+	"example.com/traefik-connect/internal/websocketx"
 )
 
 var workerLargePayload = "0123456789abcdef" + "x" + strings.Repeat("a", 1<<20)
@@ -142,6 +145,107 @@ func TestProxyServerTunnelStreamsRequestAndResponse(t *testing.T) {
 	}
 }
 
+func TestProxyServerHandlesWebSocketUpgrade(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Path; got != "/ws" {
+			t.Fatalf("backend path = %q", got)
+		}
+		if got := r.Header.Get("Upgrade"); !strings.EqualFold(got, "websocket") {
+			t.Fatalf("backend upgrade = %q", got)
+		}
+		conn, err := websocketx.Accept(w, r)
+		if err != nil {
+			t.Fatalf("backend websocket accept: %v", err)
+		}
+		defer conn.Close()
+		for {
+			opcode, payload, err := conn.ReadFrame()
+			if err != nil {
+				return
+			}
+			switch opcode {
+			case 0x8:
+				_ = conn.WriteClose(payload)
+				return
+			case 0x1, 0x2:
+				if err := conn.WriteText(payload); err != nil {
+					return
+				}
+			}
+		}
+	}))
+	defer backend.Close()
+
+	agent := &Agent{
+		cfg: config.AgentConfig{Token: "secret"},
+		snapshot: model.Snapshot{
+			WorkerID: "worker-a",
+			Containers: []model.ContainerSpec{
+				{
+					ID: "container-1",
+					Services: map[string]model.ServiceSpec{
+						"whoami-svc": {
+							BackendURL: backend.URL,
+						},
+					},
+				},
+			},
+		},
+	}
+	srv := httptest.NewServer(NewProxyServer(agent, slog.Default()))
+	defer srv.Close()
+
+	stream, err := tunnel.Dial(context.Background(), srv.URL+"/tunnel", http.Header{
+		proxyheaders.Token:       []string{"secret"},
+		proxyheaders.ContainerID: []string{"container-1"},
+		proxyheaders.ServiceName: []string{"whoami-svc"},
+	})
+	if err != nil {
+		t.Fatalf("dial tunnel: %v", err)
+	}
+	defer stream.Close()
+
+	reqStart := tunnel.RequestStart{
+		Method: http.MethodGet,
+		Path:   "/ws",
+		Host:   "stream.example.test",
+		Header: http.Header{
+			"Connection":              []string{"Upgrade"},
+			"Upgrade":                 []string{"websocket"},
+			"Sec-WebSocket-Version":   []string{"13"},
+			"Sec-WebSocket-Key":       []string{"dGhlIHNhbXBsZSBub25jZQ=="},
+			"Sec-WebSocket-Protocol":   []string{},
+			"Sec-WebSocket-Extensions": []string{},
+		},
+	}
+	if err := stream.WriteRequestStart(reqStart); err != nil {
+		t.Fatalf("write request start: %v", err)
+	}
+	if err := stream.WriteRequestEnd(); err != nil {
+		t.Fatalf("write request end: %v", err)
+	}
+
+	respStart, err := stream.ReadResponseStart()
+	if err != nil {
+		t.Fatalf("read response start: %v", err)
+	}
+	if respStart.Status != http.StatusSwitchingProtocols {
+		t.Fatalf("status = %d", respStart.Status)
+	}
+
+	if err := stream.WriteBinary(encodeClientWebSocketTextFrame(t, "hello")); err != nil {
+		t.Fatalf("write ws frame: %v", err)
+	}
+	opcode, payload, err := stream.ReadMessage()
+	if err != nil {
+		t.Fatalf("read ws echo: %v", err)
+	}
+	frameOpcode, framePayload := decodeServerWebSocketFrame(t, opcode, payload)
+	if frameOpcode != 0x1 || string(framePayload) != "hello" {
+		t.Fatalf("ws echo opcode=%d payload=%q", frameOpcode, framePayload)
+	}
+}
+
 func TestProxyServerVersionAndHealth(t *testing.T) {
 	agent := &Agent{cfg: config.AgentConfig{Token: "secret"}}
 	srv := httptest.NewServer(NewProxyServer(agent, slog.Default()))
@@ -161,6 +265,66 @@ func TestProxyServerVersionAndHealth(t *testing.T) {
 }
 
 func boolPtr(v bool) *bool { return &v }
+
+func encodeClientWebSocketTextFrame(t *testing.T, payload string) []byte {
+	t.Helper()
+	body := []byte(payload)
+	mask := make([]byte, 4)
+	if _, err := rand.Read(mask); err != nil {
+		t.Fatalf("rand: %v", err)
+	}
+	out := make([]byte, 0, 2+4+len(body))
+	out = append(out, 0x81)
+	if len(body) < 126 {
+		out = append(out, 0x80|byte(len(body)))
+	} else {
+		t.Fatalf("payload too large for test")
+	}
+	out = append(out, mask...)
+	for i, b := range body {
+		out = append(out, b^mask[i%4])
+	}
+	return out
+}
+
+func decodeServerWebSocketFrame(t *testing.T, opcode byte, payload []byte) (byte, []byte) {
+	t.Helper()
+	if opcode != 0x2 {
+		t.Fatalf("unexpected tunnel opcode %d", opcode)
+	}
+	if len(payload) < 2 {
+		t.Fatalf("payload too short")
+	}
+	wsOpcode := payload[0] & 0x0f
+	masked := payload[1]&0x80 != 0
+	length := int(payload[1] & 0x7f)
+	idx := 2
+	switch length {
+	case 126:
+		if len(payload) < idx+2 {
+			t.Fatalf("payload too short for extended length")
+		}
+		length = int(binary.BigEndian.Uint16(payload[idx : idx+2]))
+		idx += 2
+	case 127:
+		if len(payload) < idx+8 {
+			t.Fatalf("payload too short for extended length")
+		}
+		ln := binary.BigEndian.Uint64(payload[idx : idx+8])
+		if ln > uint64(^uint(0)>>1) {
+			t.Fatalf("payload too large")
+		}
+		length = int(ln)
+		idx += 8
+	}
+	if masked {
+		t.Fatalf("server frame unexpectedly masked")
+	}
+	if len(payload) < idx+length {
+		t.Fatalf("payload length mismatch")
+	}
+	return wsOpcode, payload[idx : idx+length]
+}
 
 func TestProxyServerHandlesLongPollingStyleStream(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
