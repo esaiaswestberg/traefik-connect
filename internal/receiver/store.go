@@ -81,10 +81,14 @@ func (s *Store) Load() error {
 			}
 			continue
 		}
-		workerID := state.Snapshot.WorkerID
-		if workerID == "" {
+		if !persistedRecordCompatible(state) {
+			if s.log != nil {
+				s.log.Warn("dropping incompatible persisted worker state", "file", entry.Name(), "worker_id", state.Snapshot.WorkerID)
+			}
+			_ = os.Remove(filepath.Join(s.stateDir, entry.Name()))
 			continue
 		}
+		workerID := state.Snapshot.WorkerID
 		s.workers[workerID] = state
 	}
 	return s.reconcileAll()
@@ -584,6 +588,19 @@ func validateSnapshot(snapshot model.Snapshot) ([]model.ValidationIssue, model.S
 		cleaned.Containers = append(cleaned.Containers, c)
 	}
 	return issues, cleaned
+}
+
+func persistedRecordCompatible(record workerRecord) bool {
+	if record.Snapshot.WorkerID == "" {
+		return false
+	}
+	if record.Snapshot.AdvertiseAddr == "" {
+		return false
+	}
+	if record.Snapshot.ProxyPort <= 0 {
+		return false
+	}
+	return true
 }
 
 func hasSnapshotIssue(issues []model.ValidationIssue) bool {

@@ -119,4 +119,46 @@ func TestValidateSnapshotDropsInvalidContainers(t *testing.T) {
 	}
 }
 
+func TestPersistedRecordCompatible(t *testing.T) {
+	cases := []struct {
+		name   string
+		record workerRecord
+		want   bool
+	}{
+		{
+			name: "legacy snapshot missing proxy port",
+			record: workerRecord{
+				persistedState: persistedState{
+					Snapshot: model.Snapshot{
+						WorkerID:      "worker-a",
+						AdvertiseAddr: "192.168.1.10",
+						ProxyPort:     0,
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "valid snapshot",
+			record: workerRecord{
+				persistedState: persistedState{
+					Snapshot: model.Snapshot{
+						WorkerID:      "worker-a",
+						AdvertiseAddr: "192.168.1.10",
+						ProxyPort:     8090,
+					},
+				},
+			},
+			want: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := persistedRecordCompatible(tc.record); got != tc.want {
+				t.Fatalf("persistedRecordCompatible() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func boolPtr(v bool) *bool { return &v }
