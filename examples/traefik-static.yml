@@ -34,6 +34,16 @@ certificatesResolvers:
         # ACME validation uses the plain HTTP entry point.
         entryPoint: web
 
+serversTransport:
+  # Tune the default backend transport for long uploads, streaming responses, and WebSockets.
+  forwardingTimeouts:
+    # Keep the connection establishment timeout explicit but still bounded.
+    dialTimeout: 30s
+    # Do not kill backends that take a while to produce their first byte.
+    responseHeaderTimeout: 0s
+    # Do not evict backend keep-alives while streaming or waiting between requests.
+    idleConnTimeout: 0s
+
 providers:
   docker:
     # Traefik discovers the master-local stub containers through the Docker socket.

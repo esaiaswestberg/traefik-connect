@@ -78,3 +78,29 @@ func TestServerWaitEndpoint(t *testing.T) {
 		t.Fatalf("wait body = %q", got)
 	}
 }
+
+func TestServerEventsEndpoint(t *testing.T) {
+	srv, err := New(config.TestAppConfig{
+		ListenAddr: ":0",
+		Name:       "testapp",
+		FileSize:   1 << 20,
+	}, slog.Default())
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	defer os.RemoveAll(filepath.Dir(srv.filePath))
+
+	req := httptest.NewRequest(http.MethodGet, "http://testapp.local/events?count=2&interval=1ms", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("events status = %d", rec.Code)
+	}
+	got := rec.Body.String()
+	if !strings.Contains(got, ": testapp starting") {
+		t.Fatalf("events body missing initial comment = %q", got)
+	}
+	if !strings.Contains(got, "data: testapp 0") || !strings.Contains(got, "data: testapp 1") {
+		t.Fatalf("events body = %q", got)
+	}
+}

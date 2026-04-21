@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -132,6 +133,18 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	count := 10
+	if raw := r.URL.Query().Get("count"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			count = parsed
+		}
+	}
+	interval := time.Second
+	if raw := r.URL.Query().Get("interval"); raw != "" {
+		if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {
+			interval = parsed
+		}
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -143,9 +156,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _ = fmt.Fprintf(w, ": %s starting\n\n", s.cfg.Name)
 	flusher.Flush()
-	ticker := time.NewTicker(time.Second)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	for i := 0; i < 10; i++ {
+	for i := 0; i < count; i++ {
 		select {
 		case <-r.Context().Done():
 			return
@@ -170,6 +183,7 @@ func (s *Server) handleWait(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
 	started := time.Now()
 	_, _ = fmt.Fprintf(w, "waiting %s\n", dur)
 	flusher.Flush()
