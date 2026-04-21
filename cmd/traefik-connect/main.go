@@ -11,6 +11,7 @@ import (
 	"example.com/traefik-connect/internal/config"
 	"example.com/traefik-connect/internal/receiver"
 	"example.com/traefik-connect/internal/stub"
+	"example.com/traefik-connect/internal/testapp"
 	"example.com/traefik-connect/internal/worker"
 )
 
@@ -57,6 +58,16 @@ func main() {
 				err = srv.Listen(ctx)
 			}
 		}
+	case "testapp":
+		var cfg config.TestAppConfig
+		cfg, err = config.LoadTestApp(os.Args[2:])
+		if err == nil {
+			var srv *testapp.Server
+			srv, err = testapp.New(cfg, logger)
+			if err == nil {
+				err = srv.Listen(ctx)
+			}
+		}
 	default:
 		usage()
 		os.Exit(2)
@@ -69,5 +80,5 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: traefik-connect [agent|receiver|stub] [flags]")
+	fmt.Fprintln(os.Stderr, "usage: traefik-connect [agent|receiver|stub|testapp] [flags]")
 }

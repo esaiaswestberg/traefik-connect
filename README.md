@@ -44,6 +44,8 @@ go test ./...
 docker build -t traefik-connect .
 ```
 
+For stream/video/upload/WebSocket validation, see [TESTING.md](TESTING.md).
+
 ## Master setup
 
 The master stack needs three things:

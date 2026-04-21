@@ -63,3 +63,51 @@ services:
       # Middleware that redirects HTTP requests to HTTPS.
       traefik.http.middlewares.secure.redirectscheme.scheme: https
       traefik.http.middlewares.secure.redirectscheme.permanent: "true"
+
+  streamlab:
+    image: traefik-connect
+    build: .
+    profiles:
+      - testing
+    # Streaming test helper: SSE, long-poll, uploads, and WebSockets.
+    command:
+      - testapp
+      - --listen
+      - :8080
+      - --name
+      - streamlab
+    expose:
+      - "8080"
+    labels:
+      traefik-connect.enable: "true"
+      traefik.http.routers.streamlab.rule: Host(`stream.example.test`)
+      traefik.http.routers.streamlab.entrypoints: websecure
+      traefik.http.routers.streamlab.tls: "true"
+      traefik.http.routers.streamlab.tls.certresolver: letsencrypt
+      traefik.http.routers.streamlab.service: streamlab-svc
+      traefik.http.services.streamlab-svc.loadbalancer.server.port: "8080"
+      traefik.http.services.streamlab-svc.loadbalancer.passhostheader: "true"
+
+  medialab:
+    image: traefik-connect
+    build: .
+    profiles:
+      - testing
+    # Media test helper: large downloads and Range requests.
+    command:
+      - testapp
+      - --listen
+      - :8080
+      - --name
+      - medialab
+    expose:
+      - "8080"
+    labels:
+      traefik-connect.enable: "true"
+      traefik.http.routers.medialab.rule: Host(`media.example.test`)
+      traefik.http.routers.medialab.entrypoints: websecure
+      traefik.http.routers.medialab.tls: "true"
+      traefik.http.routers.medialab.tls.certresolver: letsencrypt
+      traefik.http.routers.medialab.service: medialab-svc
+      traefik.http.services.medialab-svc.loadbalancer.server.port: "8080"
+      traefik.http.services.medialab-svc.loadbalancer.passhostheader: "true"

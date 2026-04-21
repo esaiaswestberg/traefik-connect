@@ -49,6 +49,12 @@ type StubConfig struct {
 	ServiceName string
 }
 
+type TestAppConfig struct {
+	ListenAddr string
+	Name       string
+	FileSize   int64
+}
+
 func LoadAgent(args []string) (AgentConfig, error) {
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
 	cfg := AgentConfig{
@@ -142,6 +148,25 @@ func LoadStub(args []string) (StubConfig, error) {
 	}
 	if cfg.TargetURL == "" || cfg.Token == "" || cfg.ContainerID == "" || cfg.ServiceName == "" {
 		return StubConfig{}, fmt.Errorf("target-url, token, container-id, and service-name are required")
+	}
+	return cfg, nil
+}
+
+func LoadTestApp(args []string) (TestAppConfig, error) {
+	fs := flag.NewFlagSet("testapp", flag.ContinueOnError)
+	cfg := TestAppConfig{
+		ListenAddr: envOr("TESTAPP_LISTEN_ADDR", ":8080"),
+		Name:       envOr("TESTAPP_NAME", "testapp"),
+		FileSize:   envInt64("TESTAPP_FILE_SIZE", 16<<20),
+	}
+	fs.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "listen address")
+	fs.StringVar(&cfg.Name, "name", cfg.Name, "service name")
+	fs.Int64Var(&cfg.FileSize, "file-size", cfg.FileSize, "sample file size")
+	if err := fs.Parse(args); err != nil {
+		return TestAppConfig{}, err
+	}
+	if cfg.ListenAddr == "" || cfg.Name == "" || cfg.FileSize <= 0 {
+		return TestAppConfig{}, fmt.Errorf("listen, name, and file-size are required")
 	}
 	return cfg, nil
 }
