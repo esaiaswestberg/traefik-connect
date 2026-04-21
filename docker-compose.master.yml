@@ -1,7 +1,6 @@
 services:
   receiver:
-    image: traefik-connect
-    build: .
+    image: ghcr.io/esaiaswestberg/traefik-connect:nightly
     command:
       - receiver
       - --listen
@@ -15,7 +14,7 @@ services:
       - --docker-network
       - traefik-connect
       - --stub-image
-      - traefik-connect
+      - ghcr.io/esaiaswestberg/traefik-connect:nightly
     environment:
       # Shared bearer token used by worker snapshots and stub-to-worker proxy calls.
       RECEIVER_TOKEN: ${RECEIVER_TOKEN}
@@ -26,7 +25,7 @@ services:
       # Docker network used to attach the stub containers so Traefik can reach them.
       RECEIVER_DOCKER_NETWORK: traefik-connect
       # Image used for the stub containers that Traefik routes to.
-      RECEIVER_STUB_IMAGE: traefik-connect
+      RECEIVER_STUB_IMAGE: ghcr.io/esaiaswestberg/traefik-connect:nightly
     volumes:
       - ./state:/state
       - /var/run/docker.sock:/var/run/docker.sock

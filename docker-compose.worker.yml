@@ -1,7 +1,6 @@
 services:
   agent:
-    image: traefik-connect
-    build: .
+    image: ghcr.io/esaiaswestberg/traefik-connect:nightly
     # Host networking lets the proxy reach worker-local container addresses directly.
     network_mode: host
     command:
@@ -65,8 +64,7 @@ services:
       traefik.http.middlewares.secure.redirectscheme.permanent: "true"
 
   streamlab:
-    image: traefik-connect
-    build: .
+    image: ghcr.io/esaiaswestberg/traefik-connect:nightly
     profiles:
       - testing
     # Streaming test helper: SSE, long-poll, uploads, and WebSockets.
@@ -89,8 +87,7 @@ services:
       traefik.http.services.streamlab-svc.loadbalancer.passhostheader: "true"
 
   medialab:
-    image: traefik-connect
-    build: .
+    image: ghcr.io/esaiaswestberg/traefik-connect:nightly
     profiles:
       - testing
     # Media test helper: large downloads and Range requests.
