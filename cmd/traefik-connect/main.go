@@ -8,9 +8,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"traefik-connect/internal/config"
-	"traefik-connect/internal/receiver"
-	"traefik-connect/internal/worker"
+	"example.com/traefik-connect/internal/config"
+	"example.com/traefik-connect/internal/receiver"
+	"example.com/traefik-connect/internal/worker"
 )
 
 func main() {

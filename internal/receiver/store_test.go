@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"traefik-connect/internal/model"
+	"example.com/traefik-connect/internal/model"
 )
 
 func TestStoreUpsertRendersSnapshot(t *testing.T) {

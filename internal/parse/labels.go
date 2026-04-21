@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"traefik-connect/internal/dockerx"
-	"traefik-connect/internal/model"
+	"example.com/traefik-connect/internal/dockerx"
+	"example.com/traefik-connect/internal/model"
 )
 
 const (

@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"traefik-connect/internal/api"
-	"traefik-connect/internal/model"
+	"example.com/traefik-connect/internal/api"
+	"example.com/traefik-connect/internal/model"
 )
 
 type Server struct {

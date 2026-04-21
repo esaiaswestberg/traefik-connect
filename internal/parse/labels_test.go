@@ -3,7 +3,7 @@ package parse
 import (
 	"testing"
 
-	"traefik-connect/internal/dockerx"
+	"example.com/traefik-connect/internal/dockerx"
 )
 
 func TestBuildContainerResolvesPublishedPort(t *testing.T) {

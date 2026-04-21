@@ -13,12 +13,12 @@ import (
 	"sync"
 	"time"
 
-	"traefik-connect/internal/api"
-	"traefik-connect/internal/config"
-	"traefik-connect/internal/dockerx"
-	"traefik-connect/internal/model"
-	"traefik-connect/internal/parse"
-	"traefik-connect/internal/util"
+	"example.com/traefik-connect/internal/api"
+	"example.com/traefik-connect/internal/config"
+	"example.com/traefik-connect/internal/dockerx"
+	"example.com/traefik-connect/internal/model"
+	"example.com/traefik-connect/internal/parse"
+	"example.com/traefik-connect/internal/util"
 )
 
 type Agent struct {

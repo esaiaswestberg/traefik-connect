@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"traefik-connect/internal/model"
-	"traefik-connect/internal/render"
-	"traefik-connect/internal/util"
+	"example.com/traefik-connect/internal/model"
+	"example.com/traefik-connect/internal/render"
+	"example.com/traefik-connect/internal/util"
 )
 
 type persistedState struct {

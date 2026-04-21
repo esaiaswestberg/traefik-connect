@@ -3,7 +3,7 @@ package api
 import (
 	"time"
 
-	"traefik-connect/internal/model"
+	"example.com/traefik-connect/internal/model"
 )
 
 type SnapshotResponse struct {

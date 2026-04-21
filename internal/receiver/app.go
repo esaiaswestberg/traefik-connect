@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"traefik-connect/internal/config"
+	"example.com/traefik-connect/internal/config"
 )
 
 type App struct {
