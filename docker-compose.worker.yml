@@ -34,10 +34,11 @@ services:
       - "18080:80"
     labels:
       traefik-sync.enable: "true"
-      traefik.http.routers.whoami.rule: Host(`whoami.example.test`)
+      traefik.http.routers.whoami-http.rule: Host(`whoami.example.test`)
       traefik.http.routers.whoami-http.entrypoints: web
       traefik.http.routers.whoami-http.middlewares: secure
       traefik.http.routers.whoami-http.service: whoami-svc
+      traefik.http.routers.whoami-https.rule: Host(`whoami.example.test`)
       traefik.http.routers.whoami-https.entrypoints: websecure
       traefik.http.routers.whoami-https.tls: "true"
       traefik.http.routers.whoami-https.tls.certresolver: letsencrypt
