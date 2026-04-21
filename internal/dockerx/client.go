@@ -81,7 +81,7 @@ type Event struct {
 }
 
 func (c *Client) ListContainers(ctx context.Context) ([]ContainerSummary, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.mustURL("/containers/json?all=1"), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.mustURL("/containers/json", url.Values{"all": {"1"}}), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +93,7 @@ func (c *Client) ListContainers(ctx context.Context) ([]ContainerSummary, error)
 }
 
 func (c *Client) InspectContainer(ctx context.Context, id string) (ContainerInspect, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.mustURL("/containers/"+id+"/json"), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.mustURL("/containers/"+id+"/json", nil), nil)
 	if err != nil {
 		return ContainerInspect{}, err
 	}
@@ -108,7 +108,7 @@ func (c *Client) WatchEvents(ctx context.Context, since time.Time, onEvent func(
 	values := url.Values{}
 	values.Set("type", "container")
 	values.Set("since", fmt.Sprint(since.Unix()))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.mustURL("/events?"+values.Encode()), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.mustURL("/events", values), nil)
 	if err != nil {
 		return err
 	}
@@ -135,9 +135,12 @@ func (c *Client) WatchEvents(ctx context.Context, since time.Time, onEvent func(
 	}
 }
 
-func (c *Client) mustURL(path string) string {
+func (c *Client) mustURL(path string, query url.Values) string {
 	u := *c.base
 	u.Path = path
+	if query != nil {
+		u.RawQuery = query.Encode()
+	}
 	return u.String()
 }
 
