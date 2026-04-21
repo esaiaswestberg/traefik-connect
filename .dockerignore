@@ -1,7 +1,7 @@
 .git
 .codex
-state
-render
+/state
+/render
 bin
 tmp
 *.log
