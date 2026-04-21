@@ -96,23 +96,23 @@ func renderContainer(workerID string, c model.ContainerSpec) ([]block, []block, 
 
 func renderRouter(name string, r model.RouterSpec, serviceMap, mwMap map[string]string) (block, error) {
 	var buf strings.Builder
-	buf.WriteString("  ")
+	writeIndent(&buf, 2)
 	buf.WriteString(name)
 	buf.WriteString(":\n")
 	if r.Rule != "" {
-		writeKeyValue(&buf, 2, "rule", quote(r.Rule))
+		writeKeyValue(&buf, 3, "rule", quote(r.Rule))
 	}
 	if len(r.EntryPoints) > 0 {
-		writeStringList(&buf, 2, "entryPoints", r.EntryPoints)
+		writeStringList(&buf, 3, "entryPoints", r.EntryPoints)
 	}
 	if r.TLS != nil {
-		writeIndent(&buf, 2)
+		writeIndent(&buf, 3)
 		buf.WriteString("tls")
 		if r.TLS.CertResolver == "" {
 			buf.WriteString(": {}\n")
 		} else {
 			buf.WriteString(":\n")
-			writeKeyValue(&buf, 3, "certResolver", quote(r.TLS.CertResolver))
+			writeKeyValue(&buf, 4, "certResolver", quote(r.TLS.CertResolver))
 		}
 	}
 	if len(r.Middlewares) > 0 {
@@ -123,38 +123,38 @@ func renderRouter(name string, r model.RouterSpec, serviceMap, mwMap map[string]
 			}
 		}
 		if len(resolved) > 0 {
-			writeStringList(&buf, 2, "middlewares", resolved)
+			writeStringList(&buf, 3, "middlewares", resolved)
 		}
 	}
 	if r.Service != "" {
 		if g, ok := serviceMap[r.Service]; ok {
-			writeKeyValue(&buf, 2, "service", quote(g))
+			writeKeyValue(&buf, 3, "service", quote(g))
 		}
 	}
 	if r.Priority != nil {
-		writeKeyValue(&buf, 2, "priority", fmt.Sprintf("%d", *r.Priority))
+		writeKeyValue(&buf, 3, "priority", fmt.Sprintf("%d", *r.Priority))
 	}
 	return block{name: name, body: buf.String()}, nil
 }
 
 func renderService(name string, s model.ServiceSpec) (block, error) {
 	var buf strings.Builder
-	buf.WriteString("  ")
+	writeIndent(&buf, 2)
 	buf.WriteString(name)
 	buf.WriteString(":\n")
-	writeIndent(&buf, 2)
-	buf.WriteString("loadBalancer:\n")
 	writeIndent(&buf, 3)
-	buf.WriteString("servers:\n")
+	buf.WriteString("loadBalancer:\n")
 	writeIndent(&buf, 4)
+	buf.WriteString("servers:\n")
+	writeIndent(&buf, 5)
 	buf.WriteString("- url: ")
 	buf.WriteString(quote(s.BackendURL))
 	buf.WriteByte('\n')
 	if s.PassHostHeader != nil {
-		writeKeyValue(&buf, 3, "passHostHeader", fmt.Sprintf("%t", *s.PassHostHeader))
+		writeKeyValue(&buf, 4, "passHostHeader", fmt.Sprintf("%t", *s.PassHostHeader))
 	}
 	if s.Sticky != nil && *s.Sticky {
-		writeIndent(&buf, 3)
+		writeIndent(&buf, 4)
 		buf.WriteString("sticky: {}\n")
 	}
 	return block{name: name, body: buf.String()}, nil
@@ -162,84 +162,84 @@ func renderService(name string, s model.ServiceSpec) (block, error) {
 
 func renderMiddleware(name string, m model.MiddlewareSpec) (block, error) {
 	var buf strings.Builder
-	buf.WriteString("  ")
+	writeIndent(&buf, 2)
 	buf.WriteString(name)
 	buf.WriteString(":\n")
 	if m.RedirectScheme != nil {
-		writeIndent(&buf, 2)
+		writeIndent(&buf, 3)
 		buf.WriteString("redirectScheme:\n")
 		if m.RedirectScheme.Scheme != "" {
-			writeKeyValue(&buf, 3, "scheme", quote(m.RedirectScheme.Scheme))
+			writeKeyValue(&buf, 4, "scheme", quote(m.RedirectScheme.Scheme))
 		}
 		if m.RedirectScheme.Permanent != nil {
-			writeKeyValue(&buf, 3, "permanent", fmt.Sprintf("%t", *m.RedirectScheme.Permanent))
+			writeKeyValue(&buf, 4, "permanent", fmt.Sprintf("%t", *m.RedirectScheme.Permanent))
 		}
 	}
 	if m.Headers != nil {
-		writeIndent(&buf, 2)
+		writeIndent(&buf, 3)
 		buf.WriteString("headers:\n")
 		if len(m.Headers.CustomRequestHeaders) > 0 {
-			writeIndent(&buf, 3)
+			writeIndent(&buf, 4)
 			buf.WriteString("customRequestHeaders:\n")
-			writeStringMap(&buf, 4, m.Headers.CustomRequestHeaders)
+			writeStringMap(&buf, 5, m.Headers.CustomRequestHeaders)
 		}
 		if len(m.Headers.CustomResponseHeaders) > 0 {
-			writeIndent(&buf, 3)
+			writeIndent(&buf, 4)
 			buf.WriteString("customResponseHeaders:\n")
-			writeStringMap(&buf, 4, m.Headers.CustomResponseHeaders)
+			writeStringMap(&buf, 5, m.Headers.CustomResponseHeaders)
 		}
 		if m.Headers.SSLRedirect != nil {
-			writeKeyValue(&buf, 3, "sslRedirect", fmt.Sprintf("%t", *m.Headers.SSLRedirect))
+			writeKeyValue(&buf, 4, "sslRedirect", fmt.Sprintf("%t", *m.Headers.SSLRedirect))
 		}
 		if m.Headers.STSSeconds != nil {
-			writeKeyValue(&buf, 3, "stsSeconds", fmt.Sprintf("%d", *m.Headers.STSSeconds))
+			writeKeyValue(&buf, 4, "stsSeconds", fmt.Sprintf("%d", *m.Headers.STSSeconds))
 		}
 		if m.Headers.STSIncludeSubdomains != nil {
-			writeKeyValue(&buf, 3, "stsIncludeSubdomains", fmt.Sprintf("%t", *m.Headers.STSIncludeSubdomains))
+			writeKeyValue(&buf, 4, "stsIncludeSubdomains", fmt.Sprintf("%t", *m.Headers.STSIncludeSubdomains))
 		}
 		if m.Headers.STSPreload != nil {
-			writeKeyValue(&buf, 3, "stsPreload", fmt.Sprintf("%t", *m.Headers.STSPreload))
+			writeKeyValue(&buf, 4, "stsPreload", fmt.Sprintf("%t", *m.Headers.STSPreload))
 		}
 		if m.Headers.ForceSTSHeader != nil {
-			writeKeyValue(&buf, 3, "forceSTSHeader", fmt.Sprintf("%t", *m.Headers.ForceSTSHeader))
+			writeKeyValue(&buf, 4, "forceSTSHeader", fmt.Sprintf("%t", *m.Headers.ForceSTSHeader))
 		}
 		if m.Headers.BrowserXSSFilter != nil {
-			writeKeyValue(&buf, 3, "browserXSSFilter", fmt.Sprintf("%t", *m.Headers.BrowserXSSFilter))
+			writeKeyValue(&buf, 4, "browserXSSFilter", fmt.Sprintf("%t", *m.Headers.BrowserXSSFilter))
 		}
 		if m.Headers.ContentTypeNosniff != nil {
-			writeKeyValue(&buf, 3, "contentTypeNosniff", fmt.Sprintf("%t", *m.Headers.ContentTypeNosniff))
+			writeKeyValue(&buf, 4, "contentTypeNosniff", fmt.Sprintf("%t", *m.Headers.ContentTypeNosniff))
 		}
 		if m.Headers.FrameDeny != nil {
-			writeKeyValue(&buf, 3, "frameDeny", fmt.Sprintf("%t", *m.Headers.FrameDeny))
+			writeKeyValue(&buf, 4, "frameDeny", fmt.Sprintf("%t", *m.Headers.FrameDeny))
 		}
 		if len(m.Headers.AccessControlAllowOriginList) > 0 {
-			writeStringList(&buf, 3, "accessControlAllowOriginList", m.Headers.AccessControlAllowOriginList)
+			writeStringList(&buf, 4, "accessControlAllowOriginList", m.Headers.AccessControlAllowOriginList)
 		}
 		if len(m.Headers.AccessControlAllowMethods) > 0 {
-			writeStringList(&buf, 3, "accessControlAllowMethods", m.Headers.AccessControlAllowMethods)
+			writeStringList(&buf, 4, "accessControlAllowMethods", m.Headers.AccessControlAllowMethods)
 		}
 		if len(m.Headers.AccessControlAllowHeaders) > 0 {
-			writeStringList(&buf, 3, "accessControlAllowHeaders", m.Headers.AccessControlAllowHeaders)
+			writeStringList(&buf, 4, "accessControlAllowHeaders", m.Headers.AccessControlAllowHeaders)
 		}
 		if len(m.Headers.AccessControlExposeHeaders) > 0 {
-			writeStringList(&buf, 3, "accessControlExposeHeaders", m.Headers.AccessControlExposeHeaders)
+			writeStringList(&buf, 4, "accessControlExposeHeaders", m.Headers.AccessControlExposeHeaders)
 		}
 		if m.Headers.AccessControlMaxAge != "" {
-			writeKeyValue(&buf, 3, "accessControlMaxAge", quote(m.Headers.AccessControlMaxAge))
+			writeKeyValue(&buf, 4, "accessControlMaxAge", quote(m.Headers.AccessControlMaxAge))
 		}
 		if m.Headers.AddVaryHeader != nil {
-			writeKeyValue(&buf, 3, "addVaryHeader", fmt.Sprintf("%t", *m.Headers.AddVaryHeader))
+			writeKeyValue(&buf, 4, "addVaryHeader", fmt.Sprintf("%t", *m.Headers.AddVaryHeader))
 		}
 	}
 	if len(m.BasicAuthUsers) > 0 {
-		writeIndent(&buf, 2)
+		writeIndent(&buf, 3)
 		buf.WriteString("basicAuth:\n")
-		writeStringList(&buf, 3, "users", m.BasicAuthUsers)
+		writeStringList(&buf, 4, "users", m.BasicAuthUsers)
 	}
 	if len(m.StripPrefixPrefixes) > 0 {
-		writeIndent(&buf, 2)
+		writeIndent(&buf, 3)
 		buf.WriteString("stripPrefix:\n")
-		writeStringList(&buf, 3, "prefixes", m.StripPrefixPrefixes)
+		writeStringList(&buf, 4, "prefixes", m.StripPrefixPrefixes)
 	}
 	return block{name: name, body: buf.String()}, nil
 }
