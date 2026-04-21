@@ -31,7 +31,7 @@ services:
       - traefik-connect
 
   traefik:
-    image: traefik:v3.1
+    image: traefik:v3
     command:
       - --configFile=/etc/traefik/traefik.yml
     environment:

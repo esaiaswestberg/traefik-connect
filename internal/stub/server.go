@@ -75,10 +75,6 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
 		return
 	}
-	if !bearerOK(r, s.cfg.Token) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("read request: %v", err), http.StatusBadRequest)
@@ -144,9 +140,4 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	if len(proxyResp.Body) > 0 {
 		_, _ = w.Write(proxyResp.Body)
 	}
-}
-
-func bearerOK(r *http.Request, token string) bool {
-	auth := r.Header.Get("Authorization")
-	return token != "" && len(auth) > 7 && auth[:7] == "Bearer " && auth[7:] == token
 }
