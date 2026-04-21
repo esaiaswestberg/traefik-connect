@@ -12,14 +12,14 @@ func TestBuildContainerResolvesContainerIp(t *testing.T) {
 	ins.Name = "/web"
 	ins.Config.Image = "example/web:latest"
 	ins.Config.Labels = map[string]string{
-		"traefik-sync.enable":                                      "true",
+		"traefik-connect.enable":                                   "true",
 		"traefik.http.routers.web.rule":                            "Host(`web.example.test`)",
 		"traefik.http.routers.web.entrypoints":                     "web",
 		"traefik.http.routers.web.tls":                             "true",
 		"traefik.http.routers.web.tls.certresolver":                "letsencrypt",
 		"traefik.http.routers.web.middlewares":                     "secure",
 		"traefik.http.routers.web.service":                         "websvc",
-		"traefik.http.services.websvc.loadbalancer.server.port":    "8080",
+		"traefik.http.services.websvc.loadbalancer.server.port":    "18181",
 		"traefik.http.services.websvc.loadbalancer.passhostheader": "true",
 		"traefik.http.middlewares.secure.redirectscheme.scheme":    "https",
 		"traefik.http.middlewares.secure.redirectscheme.permanent": "true",
@@ -34,7 +34,7 @@ func TestBuildContainerResolvesContainerIp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildContainer() error = %v", err)
 	}
-	if got := spec.Services["websvc"].BackendURL; got != "http://172.18.0.5:8080" {
+	if got := spec.Services["websvc"].BackendURL; got != "http://172.18.0.5:18181" {
 		t.Fatalf("BackendURL = %q", got)
 	}
 	if spec.Routers["web"].Service != "websvc" {
@@ -53,8 +53,8 @@ func TestBuildContainerRejectsDisabledOptIn(t *testing.T) {
 	ins.ID = "abcdef1234567890"
 	ins.Name = "/web"
 	ins.Config.Labels = map[string]string{
-		"traefik-sync.enable": "false",
-		"traefik.enable":      "true",
+		"traefik-connect.enable": "false",
+		"traefik.enable":         "true",
 	}
 	_, _, err := BuildContainer(ins, "worker-a", "192.168.1.10")
 	if err == nil {
@@ -67,10 +67,10 @@ func TestBuildContainerRejectsMissingReachableAddress(t *testing.T) {
 	ins.ID = "abcdef1234567890"
 	ins.Name = "/web"
 	ins.Config.Labels = map[string]string{
-		"traefik-sync.enable":                                   "true",
+		"traefik-connect.enable":                                "true",
 		"traefik.http.routers.web.rule":                         "Host(`web.example.test`)",
 		"traefik.http.routers.web.service":                      "websvc",
-		"traefik.http.services.websvc.loadbalancer.server.port": "8080",
+		"traefik.http.services.websvc.loadbalancer.server.port": "18181",
 	}
 	_, _, err := BuildContainer(ins, "worker-a", "")
 	if err == nil {

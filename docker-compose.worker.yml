@@ -2,6 +2,7 @@ services:
   agent:
     image: traefik-connect
     build: .
+    # Host networking lets the proxy reach worker-local container addresses directly.
     network_mode: host
     command:
       - agent
@@ -20,11 +21,17 @@ services:
       - --proxy-listen
       - :8090
     environment:
+      # Stable worker identity used by the master for reconciliation.
       AGENT_WORKER_ID: ${AGENT_WORKER_ID}
+      # LAN address that the master stub uses to reach the worker proxy.
       AGENT_ADVERTISE_ADDR: ${AGENT_ADVERTISE_ADDR}
+      # Master receiver URL. Use the host port published by the master compose override.
       AGENT_MASTER_URL: ${AGENT_MASTER_URL}
+      # Shared bearer token for snapshots and proxy calls.
       AGENT_TOKEN: ${AGENT_TOKEN}
+      # Local status endpoint for debugging and health checks.
       AGENT_STATUS_LISTEN_ADDR: :8081
+      # Local proxy endpoint used by the master stub.
       AGENT_PROXY_LISTEN_ADDR: :8090
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -33,20 +40,26 @@ services:
 
   whoami:
     image: traefik/whoami:v1.10
+    # The worker example does not publish a host port; Traefik reaches it through the proxy path.
     expose:
       - "80"
     labels:
-      traefik-sync.enable: "true"
+      # Worker opt-in label.
+      traefik-connect.enable: "true"
+      # HTTP router used to redirect traffic to HTTPS.
       traefik.http.routers.whoami-http.rule: Host(`whoami.example.test`)
       traefik.http.routers.whoami-http.entrypoints: web
       traefik.http.routers.whoami-http.middlewares: secure
       traefik.http.routers.whoami-http.service: whoami-svc
+      # HTTPS router used for the real application route.
       traefik.http.routers.whoami-https.rule: Host(`whoami.example.test`)
       traefik.http.routers.whoami-https.entrypoints: websecure
       traefik.http.routers.whoami-https.tls: "true"
       traefik.http.routers.whoami-https.tls.certresolver: letsencrypt
       traefik.http.routers.whoami-https.service: whoami-svc
+      # Service definition that tells the worker proxy which port to use on the backend container.
       traefik.http.services.whoami-svc.loadbalancer.server.port: "80"
       traefik.http.services.whoami-svc.loadbalancer.passhostheader: "true"
+      # Middleware that redirects HTTP requests to HTTPS.
       traefik.http.middlewares.secure.redirectscheme.scheme: https
       traefik.http.middlewares.secure.redirectscheme.permanent: "true"

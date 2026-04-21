@@ -85,7 +85,7 @@ func LoadAgent(args []string) (AgentConfig, error) {
 func LoadReceiver(args []string) (ReceiverConfig, TLSConfig, error) {
 	fs := flag.NewFlagSet("receiver", flag.ContinueOnError)
 	cfg := ReceiverConfig{
-		ListenAddr:       envOr("RECEIVER_LISTEN_ADDR", ":8080"),
+		ListenAddr:       envOr("RECEIVER_LISTEN_ADDR", ":18180"),
 		Token:            os.Getenv("RECEIVER_TOKEN"),
 		StateDir:         envOr("RECEIVER_STATE_DIR", "./state"),
 		RequestWindow:    envDuration("RECEIVER_REQUEST_WINDOW", 5*time.Minute),
@@ -126,7 +126,7 @@ func LoadReceiver(args []string) (ReceiverConfig, TLSConfig, error) {
 func LoadStub(args []string) (StubConfig, error) {
 	fs := flag.NewFlagSet("stub", flag.ContinueOnError)
 	cfg := StubConfig{
-		ListenAddr:  envOr("STUB_LISTEN_ADDR", ":8080"),
+		ListenAddr:  envOr("STUB_LISTEN_ADDR", ":18181"),
 		TargetURL:   os.Getenv("STUB_TARGET_URL"),
 		Token:       os.Getenv("STUB_TOKEN"),
 		ContainerID: os.Getenv("STUB_CONTAINER_ID"),

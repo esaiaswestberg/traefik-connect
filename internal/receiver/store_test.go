@@ -23,7 +23,7 @@ func TestBuildDesiredStubs(t *testing.T) {
 					"web": {Rule: "Host(`web.example.test`)", Service: "websvc", Middlewares: []string{"secure"}},
 				},
 				Services: map[string]model.ServiceSpec{
-					"websvc": {BackendURL: "http://172.18.0.5:8080", PassHostHeader: boolPtr(true)},
+					"websvc": {BackendURL: "http://172.18.0.5:18181", PassHostHeader: boolPtr(true)},
 				},
 				Middlewares: map[string]model.MiddlewareSpec{
 					"secure": {RedirectScheme: &model.RedirectScheme{Scheme: "https", Permanent: boolPtr(true)}},
@@ -49,7 +49,7 @@ func TestBuildDesiredStubs(t *testing.T) {
 	if got := spec.Labels["traefik.http.routers.web.rule"]; got != "Host(`web.example.test`)" {
 		t.Fatalf("router rule = %q", got)
 	}
-	if got := spec.Labels["traefik.http.services.websvc.loadbalancer.server.port"]; got != "8080" {
+	if got := spec.Labels["traefik.http.services.websvc.loadbalancer.server.port"]; got != "18181" {
 		t.Fatalf("service port = %q", got)
 	}
 	if got := spec.Env[0]; got != "STUB_TARGET_URL=http://192.168.1.10:8090" {
@@ -70,7 +70,7 @@ func TestValidateSnapshotRequiresProxyMetadata(t *testing.T) {
 					"web": {Rule: "Host(`web.example.test`)", Service: "websvc"},
 				},
 				Services: map[string]model.ServiceSpec{
-					"websvc": {BackendURL: "http://172.18.0.5:8080"},
+					"websvc": {BackendURL: "http://172.18.0.5:18181"},
 				},
 			},
 		},
@@ -101,7 +101,7 @@ func TestValidateSnapshotDropsInvalidContainers(t *testing.T) {
 					"web": {Rule: "Host(`web.example.test`)", Service: "websvc"},
 				},
 				Services: map[string]model.ServiceSpec{
-					"websvc": {BackendURL: "http://172.18.0.5:8080"},
+					"websvc": {BackendURL: "http://172.18.0.5:18181"},
 				},
 			},
 		},

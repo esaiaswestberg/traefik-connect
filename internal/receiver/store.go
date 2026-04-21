@@ -288,7 +288,7 @@ func (s *Store) createStubContainer(ctx context.Context, spec stubSpec) (string,
 		Cmd:    []string{"stub"},
 		Labels: spec.Labels,
 		ExposedPorts: map[string]struct{}{
-			"8080/tcp": {},
+			"18181/tcp": {},
 		},
 		HostConfig: &dockerx.ContainerHostConfig{AutoRemove: false},
 	}
@@ -406,7 +406,7 @@ func buildDesiredStubs(snapshot model.Snapshot, dockerNetwork, stubImage, stubIm
 					"STUB_TOKEN=" + token,
 					"STUB_CONTAINER_ID=" + c.ID,
 					"STUB_SERVICE_NAME=" + serviceName,
-					"STUB_LISTEN_ADDR=:8080",
+					"STUB_LISTEN_ADDR=:18181",
 				},
 			}
 			spec.Labels[managedLabelPrefix+"managed"] = "true"
@@ -419,7 +419,7 @@ func buildDesiredStubs(snapshot model.Snapshot, dockerNetwork, stubImage, stubIm
 			if dockerNetwork != "" {
 				spec.Labels["traefik.docker.network"] = dockerNetwork
 			}
-			spec.Labels["traefik.http.services."+serviceName+".loadbalancer.server.port"] = "8080"
+			spec.Labels["traefik.http.services."+serviceName+".loadbalancer.server.port"] = "18181"
 			if svc.PassHostHeader != nil {
 				spec.Labels["traefik.http.services."+serviceName+".loadbalancer.passhostheader"] = strconv.FormatBool(*svc.PassHostHeader)
 			}

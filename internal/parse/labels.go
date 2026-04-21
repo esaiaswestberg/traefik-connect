@@ -13,12 +13,12 @@ import (
 )
 
 const (
-	LabelOptInPrimary  = "traefik-sync.enable"
+	LabelOptInPrimary  = "traefik-connect.enable"
 	LabelOptInFallback = "traefik.enable"
-	LabelBackendURL    = "traefik-sync.backend.url"
-	LabelBackendHost   = "traefik-sync.backend.host"
-	LabelBackendPort   = "traefik-sync.backend.port"
-	LabelBackendScheme = "traefik-sync.backend.scheme"
+	LabelBackendURL    = "traefik-connect.backend.url"
+	LabelBackendHost   = "traefik-connect.backend.host"
+	LabelBackendPort   = "traefik-connect.backend.port"
+	LabelBackendScheme = "traefik-connect.backend.scheme"
 )
 
 type OptInDecision struct {
@@ -30,9 +30,9 @@ func IsEnabled(labels map[string]string) OptInDecision {
 	if v, ok := labels[LabelOptInPrimary]; ok {
 		b := parseBool(v, false)
 		if b {
-			return OptInDecision{Enabled: true, Reason: "traefik-sync.enable=true"}
+			return OptInDecision{Enabled: true, Reason: "traefik-connect.enable=true"}
 		}
-		return OptInDecision{Enabled: false, Reason: "traefik-sync.enable=false"}
+		return OptInDecision{Enabled: false, Reason: "traefik-connect.enable=false"}
 	}
 	if v, ok := labels[LabelOptInFallback]; ok {
 		b := parseBool(v, false)
@@ -139,7 +139,7 @@ func BuildContainer(ins dockerx.ContainerInspect, workerID, advertiseAddr string
 func relevantLabels(labels map[string]string) map[string]string {
 	out := make(map[string]string)
 	for k, v := range labels {
-		if strings.HasPrefix(k, "traefik.") || strings.HasPrefix(k, "traefik-sync.") {
+		if strings.HasPrefix(k, "traefik.") || strings.HasPrefix(k, "traefik-connect.") {
 			out[k] = v
 		}
 	}

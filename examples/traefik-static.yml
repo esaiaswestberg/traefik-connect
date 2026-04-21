@@ -1,23 +1,36 @@
+# Static Traefik configuration for the master node.
+
 entryPoints:
+  # Public HTTP entry point used for ACME HTTP-01 and HTTP-to-HTTPS redirects.
   web:
     address: ":80"
+  # Public HTTPS entry point used for real application traffic.
   websecure:
     address: ":443"
 
 certificatesResolvers:
+  # ACME resolver referenced by the worker example labels.
   letsencrypt:
     acme:
+      # Replace this with a real email address if you want actual certificates.
       email: "test@example.com"
+      # ACME storage persisted on the master.
       storage: /etc/traefik/acme/acme.json
+      # Staging CA keeps the example safe to test without production issuance.
       caServer: https://acme-staging-v02.api.letsencrypt.org/directory
       httpChallenge:
+        # ACME validation uses the plain HTTP entry point.
         entryPoint: web
 
 providers:
   docker:
+    # Traefik discovers the master-local stub containers through the Docker socket.
     endpoint: unix:///var/run/docker.sock
+    # Do not publish every container automatically; only the stub containers should be routed.
     exposedByDefault: false
+    # Keep Traefik on the shared master network so it can reach the stubs.
     network: traefik-connect
 
 api:
+  # Dashboard is useful during local testing and troubleshooting.
   dashboard: true

@@ -1,60 +1,71 @@
 # traefik-connect
 
-`traefik-connect` is a distributed control plane for Traefik in a small homelab or self-hosted environment.
+`traefik-connect` is a distributed Traefik control plane for a small homelab or self-hosted setup with:
 
-It replaces Docker Swarm, Consul, or remote Docker access with two lightweight services:
+- one public master that runs Traefik
+- one or more private workers that run application containers
+- no Swarm, Kubernetes, Consul, Nomad, or remote Docker access
 
-- a worker-side discovery agent that watches the local Docker daemon
-- a master-side receiver that accepts normalized snapshots and creates master-local stub containers with Traefik labels
+The worker agent discovers opted-in Docker containers locally. The master receiver turns those snapshots into master-local stub containers. Traefik on the master discovers those stubs through its Docker provider and sends traffic through them back to the worker proxy.
 
-## Architecture
+## How it works
 
-- The worker agent scans Docker locally via the Unix socket.
-- Only containers that opt in are exported. The preferred opt-in label is `traefik-sync.enable=true`.
-- The agent parses Traefik HTTP labels, resolves a backend URL the worker host can actually reach, and sends a full snapshot to the master over HTTPS or HTTP with bearer auth plus HMAC signing.
-- The master receiver validates the snapshot, stores it on disk, and reconciles master-local stub containers that Traefik discovers through the Docker provider.
-- The stub containers forward HTTP traffic to the worker agent proxy endpoint, which then forwards to the real application container on the worker.
-- The master example also defines an ACME resolver named `letsencrypt` so routers that set `tls.certresolver=letsencrypt` are accepted.
-- The worker agent example runs with host networking so it can reach container IPs without publishing application ports.
+1. A worker container opts in with `traefik-connect.enable=true`.
+   `traefik.enable=true` remains the final fallback.
+2. The worker agent reads the local Docker socket, parses Traefik labels, and resolves a backend URL the worker can actually reach.
+3. The agent sends a signed snapshot to the master receiver.
+4. The receiver validates the snapshot and creates or updates a local stub container on the master.
+5. Traefik sees the stub container through the Docker provider and routes requests to it.
+6. The stub forwards the request to the worker proxy endpoint, which forwards to the real application container.
 
-### Backend resolution order
+## Backend resolution order
 
-1. `traefik-sync.backend.url`
-2. `traefik-sync.backend.host` + `traefik-sync.backend.port`
-3. Container IP on the worker network or host-network address
+The worker agent resolves the application backend in this order:
 
-If resolution fails, the worker skips that container and logs the reason.
+1. `traefik-connect.backend.url`
+2. `traefik-connect.backend.host` + `traefik-connect.backend.port`
+3. A worker-reachable container address derived from Docker metadata
 
-## Repository Layout
+If resolution fails, the container is skipped and the reason is logged.
 
-- `cmd/traefik-connect`: CLI entrypoint
-- `internal/worker`: worker runtime
-- `internal/receiver`: master runtime, persistence, and validation
-- `internal/parse`: label parsing and backend resolution
-- `internal/stub`: master-side request forwarding stub container
-- `examples/`: static Traefik config and example labeled workload
+## Repository layout
 
-## Build
+- `cmd/traefik-connect`: single binary with `agent`, `receiver`, and `stub` modes
+- `internal/worker`: worker sync loop, local proxy, and status endpoint
+- `internal/receiver`: master API, persistence, and stub reconciliation
+- `internal/parse`: Traefik label parsing and backend resolution
+- `internal/stub`: master-side HTTP stub that forwards to the worker proxy
+- `examples/`: Traefik static config and a labeled worker workload
+
+## Build and test
 
 ```bash
-docker build -t traefik-connect .
 go test ./...
+docker build -t traefik-connect .
 ```
 
-## Run the receiver on the master
+## Master setup
+
+The master stack needs three things:
+
+- the receiver API on host port `18180`
+- Traefik on ports `80` and `443`
+- a shared Docker socket so Traefik can discover master-local stubs
+
+Then start the master:
 
 ```bash
-export RECEIVER_TOKEN=change-me
-docker compose -f docker-compose.master.yml up --build
+RECEIVER_TOKEN='change-me' docker compose -f docker-compose.master.yml up --build
 ```
 
-This starts:
+What starts on the master:
 
-- the receiver on port `8080`
-- Traefik on ports `80` and `443`
-- an ACME storage directory at `./acme`
-- a shared Docker network named `traefik-connect`
-- Traefik's Docker provider watching the local Docker socket
+- `receiver` on container port `18180`, published on host port `18180`
+- `traefik` on container ports `80` and `443`
+- ACME storage at `./acme`
+- master-local stub containers created by the receiver
+
+### Master API
 
 The receiver exposes:
 
@@ -63,29 +74,41 @@ The receiver exposes:
 - `GET /v1/status`
 - `POST /v1/snapshot`
 
-## Run the worker on a LAN host
+## Worker setup
+
+The worker example runs the agent with host networking so it can reach internal container addresses without publishing the application port.
 
 ```bash
-export AGENT_WORKER_ID=worker-a
-export AGENT_ADVERTISE_ADDR=192.168.1.20
-export AGENT_MASTER_URL=http://192.168.1.10:8080
-export AGENT_TOKEN=change-me
-export AGENT_PROXY_LISTEN_ADDR=:8090
+AGENT_WORKER_ID=worker-a \
+AGENT_ADVERTISE_ADDR=192.168.1.20 \
+AGENT_MASTER_URL=http://192.168.1.10:18180 \
+AGENT_TOKEN=change-me \
 docker compose -f docker-compose.worker.yml up --build
 ```
 
-The worker agent exposes:
+What starts on the worker:
+
+- `agent` on host network port `8081` for status
+- `agent` on host network port `8090` for the local proxy
+- the master stub listens on `18181` inside the container
+- a `whoami` example container with Traefik labels
+
+### Worker API
+
+The agent exposes:
 
 - `GET /healthz`
 - `GET /readyz`
 - `GET /debug/state`
 - `POST /v1/proxy`
 
-## Labeling example
+## Example labels
+
+This is the label set used by the worker example:
 
 ```yaml
 labels:
-  traefik-sync.enable: "true"
+  traefik-connect.enable: "true"
   traefik.http.routers.whoami-http.rule: Host(`whoami.example.test`)
   traefik.http.routers.whoami-http.entrypoints: web
   traefik.http.routers.whoami-http.middlewares: secure
@@ -101,23 +124,52 @@ labels:
   traefik.http.middlewares.secure.redirectscheme.permanent: "true"
 ```
 
+## Example request flow
+
+For `https://whoami.example.test`:
+
+1. Traefik matches the `whoami-https` router.
+2. Traefik connects to the master-local stub container.
+3. The stub calls the worker proxy on `http://<worker-lan-ip>:8090/v1/proxy`.
+4. The worker proxy sends the request to the real application container.
+5. The response comes back through the same path in reverse.
+
 ## Security notes
 
-- Use a long random shared token.
-- Prefer HTTPS between worker and receiver in anything beyond a lab.
-- The receiver rejects requests with bad auth, invalid signatures, oversized bodies, and stale timestamps.
-- The bundled master example uses the Let's Encrypt staging CA so the stack can be tested without production issuance pressure.
-- If you use the `letsencrypt` resolver, make sure your domain points at the master and port 80 is reachable for ACME HTTP-01 validation.
-- The worker agent proxy endpoint should be reachable only on the worker LAN or a private network.
+- Use a long random shared token for both the agent and receiver.
+- Prefer HTTPS between worker and receiver for anything beyond a lab.
+- The receiver rejects bad auth, invalid signatures, oversized bodies, and stale timestamps.
+- The worker proxy endpoint should be reachable only on the worker LAN or a private network.
+
+## ACME notes
+
+The bundled master example uses the Let's Encrypt staging CA. That means:
+
+- the sample email is intentionally fake
+- ACME issuance is expected to fail until you replace the sample email with a real address
+- the example still loads and demonstrates the routing path even if ACME cannot issue a certificate
+
+If you want real certificates:
+
+1. Replace `test@example.com` in `examples/traefik-static.yml` with a real email address.
+2. Make sure your domain resolves to the master.
+3. Make sure port `80` is reachable from the internet for HTTP-01 validation.
 
 ## Operational behavior
 
-- The worker performs a startup scan, reacts to Docker events, and performs periodic full resyncs.
-- The receiver stores state on disk and prunes workers that have not refreshed within the configured TTL.
-- Stub containers are reconciled deterministically from worker snapshots.
+- The worker performs a startup scan, watches Docker events, and resyncs periodically.
+- The receiver stores worker state on disk and prunes stale workers after the configured TTL.
+- Master-local stub containers are reconciled from worker snapshots and recreated when the stub image changes.
 
-## Limitations in v1
+## Troubleshooting
 
-- HTTP only
-- no Swarm, Kubernetes, Consul, Nomad, TCP, or UDP support
-- no UI
+- `404 page not found` usually means Traefik did not match a router on `web` or `websecure`.
+- `unauthorized` from the browser usually means the master stub and worker proxy are not using the same shared token or the wrong code is running.
+- `client version 1.24 is too old` means Traefik is too old for the Docker daemon on the master and needs a newer image.
+- If curl returns `unexpected eof while reading`, check the host-to-container port mapping for Traefik.
+
+## Limitations
+
+- HTTP only.
+- No Swarm, Kubernetes, Consul, Nomad, TCP, or UDP support.
+- No UI.
