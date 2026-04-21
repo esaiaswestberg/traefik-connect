@@ -20,10 +20,9 @@ import (
 )
 
 type ProxyServer struct {
-	agent  *Agent
-	log    *slog.Logger
-	mux    *http.ServeMux
-	client *http.Client
+	agent *Agent
+	log   *slog.Logger
+	mux   *http.ServeMux
 }
 
 func (s *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -33,25 +32,10 @@ func (s *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *ProxyServer) Handler() http.Handler { return s.mux }
 
 func NewProxyServer(agent *Agent, log *slog.Logger) *ProxyServer {
-	transport := &http.Transport{
-		Proxy:                 nil,
-		DisableCompression:    true,
-		ResponseHeaderTimeout: 0,
-		ExpectContinueTimeout: 0,
-		IdleConnTimeout:       0,
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   100,
-		MaxConnsPerHost:       0,
-		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-	}
 	ps := &ProxyServer{
-		agent:  agent,
-		log:    log,
-		mux:    http.NewServeMux(),
-		client: &http.Client{Transport: transport},
+		agent: agent,
+		log:   log,
+		mux:   http.NewServeMux(),
 	}
 	ps.mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -151,73 +135,55 @@ func (s *ProxyServer) handleHTTPTunnel(ctx context.Context, stream *tunnel.Strea
 	if err != nil {
 		return err
 	}
+	u, err := url.Parse(target)
+	if err != nil {
+		return err
+	}
+	host := u.Host
+	if host == "" {
+		return fmt.Errorf("backend url missing host")
+	}
+	conn, err := net.DialTimeout("tcp", host, 30*time.Second)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	chunked := start.ContentLength < 0
+	if err := writeHTTPRequest(conn, start, u, service.PassHostHeader != nil && *service.PassHostHeader, false, chunked); err != nil {
+		return err
+	}
 	s.log.Info("tunnel phase", "phase", "backend_request", "target", target, "container_id", container.ID, "service_name", service.Name)
 
-	var reqBody io.Reader
-	var bodyW *io.PipeWriter
 	bodyDone := make(chan error, 1)
 	if start.ContentLength != 0 {
-		bodyR, pw := io.Pipe()
-		reqBody = bodyR
-		bodyW = pw
 		go func() {
-			bodyDone <- pumpTunnelRequestBody(stream, bodyW)
+			bodyDone <- pumpTunnelRequestBodyToConn(stream, conn, chunked)
 		}()
 	}
 
-	req, err := http.NewRequestWithContext(ctx, start.Method, target, reqBody)
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, &http.Request{Method: start.Method})
 	if err != nil {
-		if bodyW != nil {
-			_ = bodyW.CloseWithError(err)
-		}
 		return err
 	}
-	req.Header = sanitizeHeaders(start.Header)
-	req.ContentLength = start.ContentLength
-	if service.PassHostHeader != nil && *service.PassHostHeader {
-		req.Host = start.Host
-	} else {
-		if u, parseErr := url.Parse(service.BackendURL); parseErr == nil {
-			req.Host = u.Host
-		} else {
-			req.Host = start.Host
-		}
-	}
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		if bodyW != nil {
-			_ = bodyW.CloseWithError(err)
-		}
-		return err
-	}
-	s.log.Info("tunnel phase", "phase", "response_start", "status", resp.StatusCode, "target", target, "container_id", container.ID, "service_name", service.Name)
 	defer resp.Body.Close()
 
+	s.log.Info("tunnel phase", "phase", "response_start", "status", resp.StatusCode, "target", target, "container_id", container.ID, "service_name", service.Name)
 	if err := stream.WriteResponseStart(tunnel.ResponseStart{
 		Status: resp.StatusCode,
 		Header: sanitizeResponseHeaders(resp.Header),
 	}); err != nil {
-		if bodyW != nil {
-			_ = bodyW.CloseWithError(err)
-		}
 		return err
 	}
 	if err := copyResponseToTunnel(stream, resp.Body); err != nil {
-		if bodyW != nil {
-			_ = bodyW.CloseWithError(err)
-		}
 		return err
 	}
 	s.log.Info("tunnel phase", "phase", "response_body", "target", target, "container_id", container.ID, "service_name", service.Name)
 	if err := stream.WriteClose(nil); err != nil {
-		if bodyW != nil {
-			_ = bodyW.CloseWithError(err)
-		}
 		return err
 	}
-	if bodyW != nil {
-		_ = bodyW.Close()
+	if start.ContentLength != 0 {
 		return <-bodyDone
 	}
 	return nil
@@ -242,7 +208,7 @@ func (s *ProxyServer) handleWebSocketTunnel(stream *tunnel.Stream, start tunnel.
 	}
 	defer conn.Close()
 
-	if err := writeHTTPRequest(conn, start, u, service.PassHostHeader != nil && *service.PassHostHeader, true); err != nil {
+	if err := writeHTTPRequest(conn, start, u, service.PassHostHeader != nil && *service.PassHostHeader, true, false); err != nil {
 		return err
 	}
 	s.log.Info("tunnel phase", "phase", "backend_request", "target", target, "container_id", container.ID, "service_name", service.Name)
@@ -345,6 +311,36 @@ func pumpTunnelRequestBody(stream *tunnel.Stream, w *io.PipeWriter) error {
 	}
 }
 
+func pumpTunnelRequestBodyToConn(stream *tunnel.Stream, conn net.Conn, chunked bool) error {
+	for {
+		op, payload, err := stream.ReadMessage()
+		if err != nil {
+			return err
+		}
+		switch op {
+		case 0x2:
+			if len(payload) == 0 {
+				continue
+			}
+			if chunked {
+				if err := writeHTTPChunk(conn, payload); err != nil {
+					return err
+				}
+				continue
+			}
+			if _, err := conn.Write(payload); err != nil {
+				return err
+			}
+		case 0x8:
+			if chunked {
+				_, err := io.WriteString(conn, "0\r\n\r\n")
+				return err
+			}
+			return nil
+		}
+	}
+}
+
 func copyResponseToTunnel(stream *tunnel.Stream, body io.Reader) error {
 	buf := make([]byte, 32*1024)
 	for {
@@ -429,7 +425,7 @@ func isWebSocketUpgrade(h http.Header) bool {
 		strings.EqualFold(h.Get("Upgrade"), "websocket")
 }
 
-func writeHTTPRequest(conn net.Conn, start tunnel.RequestStart, backendURL *url.URL, passHostHeader bool, upgrade bool) error {
+func writeHTTPRequest(conn net.Conn, start tunnel.RequestStart, backendURL *url.URL, passHostHeader bool, upgrade bool, chunked bool) error {
 	path := start.Path
 	if path == "" {
 		path = "/"
@@ -452,10 +448,26 @@ func writeHTTPRequest(conn net.Conn, start tunnel.RequestStart, backendURL *url.
 			fmt.Fprintf(&b, "%s: %s\r\n", k, v)
 		}
 	}
-	if start.ContentLength > 0 {
+	if chunked {
+		_, _ = fmt.Fprintf(&b, "Transfer-Encoding: chunked\r\n")
+	} else if start.ContentLength > 0 {
 		fmt.Fprintf(&b, "Content-Length: %d\r\n", start.ContentLength)
 	}
 	b.WriteString("\r\n")
 	_, err := conn.Write([]byte(b.String()))
+	return err
+}
+
+func writeHTTPChunk(conn net.Conn, payload []byte) error {
+	if len(payload) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintf(conn, "%x\r\n", len(payload)); err != nil {
+		return err
+	}
+	if _, err := conn.Write(payload); err != nil {
+		return err
+	}
+	_, err := io.WriteString(conn, "\r\n")
 	return err
 }
